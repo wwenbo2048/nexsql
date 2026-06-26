@@ -1,0 +1,588 @@
+import mysql, { type Pool, type RowDataPacket, type FieldPacket } from 'mysql2/promise'
+import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, RoutineInfo, EventInfo, QueryResult } from '../../shared/types'
+
+// 连接池管理
+const pools = new Map<string, Pool>()
+
+function getPoolKey(config: ConnectionConfig): string {
+  return config.id
+}
+
+function createPool(config: ConnectionConfig): Pool {
+  const pool = mysql.createPool({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    connectionLimit: 5,
+    connectTimeout: config.connectTimeout ?? 10000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+    charset: 'utf8mb4',
+    timezone: '+00:00',
+    dateStrings: true
+  })
+  pools.set(getPoolKey(config), pool)
+  return pool
+}
+
+function getPool(config: ConnectionConfig): Pool {
+  let pool = pools.get(getPoolKey(config))
+  if (!pool) {
+    pool = createPool(config)
+  }
+  return pool
+}
+
+export async function testConnection(config: ConnectionConfig): Promise<boolean> {
+  const tempPool = mysql.createPool({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    connectionLimit: 1,
+    connectTimeout: config.connectTimeout ?? 10000
+  })
+  try {
+    const conn = await tempPool.getConnection()
+    await conn.ping()
+    conn.release()
+    return true
+  } finally {
+    await tempPool.end()
+  }
+}
+
+export async function connect(config: ConnectionConfig): Promise<void> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  await conn.ping()
+  conn.release()
+}
+
+export async function disconnect(configId: string): Promise<void> {
+  const pool = pools.get(configId)
+  if (pool) {
+    await pool.end()
+    pools.delete(configId)
+  }
+}
+
+export async function executeQuery(
+  config: ConnectionConfig,
+  sql: string,
+  database?: string
+): Promise<QueryResult> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+
+  try {
+    if (database) {
+      await conn.changeUser({ database })
+    }
+
+    const startTime = performance.now()
+    const [result] = await conn.query(sql)
+    const duration = performance.now() - startTime
+
+    // 处理查询结果
+    if (Array.isArray(result)) {
+      // SELECT 查询
+      const rows = result as RowDataPacket[]
+      const fields = (await conn.query(sql))[1] as FieldPacket[]
+
+      return {
+        columns: fields.map((f) => ({
+          name: f.name,
+          type: f.type !== undefined ? String(f.type) : 'unknown',
+          nullable: (f.flags & 0x0001) === 0
+        })),
+        rows: rows as Record<string, unknown>[],
+        affectedRows: rows.length,
+        duration
+      }
+    } else {
+      // INSERT / UPDATE / DELETE
+      const r = result as {
+        affectedRows: number
+        insertId?: number
+        changedRows?: number
+        warningStatus?: number
+      }
+      let warning: string | undefined
+      if (r.warningStatus && r.warningStatus > 0) {
+        const [warnings] = await conn.query('SHOW WARNINGS')
+        const w = warnings as RowDataPacket[]
+        if (w.length > 0) {
+          warning = `${w[0].Level}: ${w[0].Message}`
+        }
+      }
+      return {
+        columns: [],
+        rows: [],
+        affectedRows: r.affectedRows,
+        insertId: r.insertId,
+        changedRows: r.changedRows,
+        duration,
+        warning
+      }
+    }
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getDatabases(config: ConnectionConfig): Promise<DatabaseInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME 
+       FROM information_schema.SCHEMATA 
+       WHERE SCHEMA_NAME NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')
+       ORDER BY SCHEMA_NAME`
+    )
+    return rows.map((r) => ({
+      name: r.SCHEMA_NAME,
+      charset: r.DEFAULT_CHARACTER_SET_NAME,
+      collation: r.DEFAULT_COLLATION_NAME
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getTables(
+  config: ConnectionConfig,
+  database: string
+): Promise<TableInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    await conn.changeUser({ database })
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT 
+        TABLE_NAME as name,
+        TABLE_TYPE as raw_type,
+        ENGINE as engine,
+        TABLE_ROWS as \`rows\`,
+        DATA_LENGTH as dataSize,
+        TABLE_COMMENT as comment
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ?
+      ORDER BY TABLE_TYPE, TABLE_NAME
+    `, [database])
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.raw_type === 'VIEW' ? 'view' : 'table',
+      engine: r.engine,
+      rows: r.rows,
+      dataSize: r.dataSize,
+      comment: r.comment
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getTableColumns(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<ColumnInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT 
+        COLUMN_NAME as \`name\`,
+        COLUMN_TYPE as \`type\`,
+        IS_NULLABLE as nullable,
+        COLUMN_KEY as columnKey,
+        COLUMN_DEFAULT as defaultValue,
+        EXTRA as extra,
+        COLUMN_COMMENT as comment
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+      ORDER BY ORDINAL_POSITION
+    `, [database, table])
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.type,
+      nullable: r.nullable === 'YES',
+      isPrimaryKey: r.columnKey === 'PRI',
+      isUnique: r.columnKey === 'UNI',
+      defaultValue: r.defaultValue,
+      extra: r.extra,
+      comment: r.comment
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getTableIndexes(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<IndexInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT 
+        INDEX_NAME as \`name\`,
+        COLUMN_NAME as column_name,
+        NON_UNIQUE = 0 as isUnique,
+        INDEX_TYPE as \`type\`
+      FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+      ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `, [database, table])
+    return rows.map((r) => ({
+      name: r.name,
+      column: r.column_name,
+      isUnique: !!r.isUnique,
+      type: r.type
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getTableRowCount(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<number> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    await conn.changeUser({ database })
+    const [rows] = await conn.query<RowDataPacket[]>(`SELECT COUNT(*) as cnt FROM \`${table}\``)
+    return rows[0].cnt as number
+  } finally {
+    conn.release()
+  }
+}
+
+export async function getTableDDL(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<string> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    await conn.changeUser({ database })
+    const [rows] = await conn.query<RowDataPacket[]>(`SHOW CREATE TABLE \`${table}\``)
+    if (rows.length > 0) {
+      return (rows[0] as Record<string, unknown>)['Create Table'] as string
+    }
+    return ''
+  } finally {
+    conn.release()
+  }
+}
+
+export async function disconnectAll(): Promise<void> {
+  for (const [key, pool] of pools) {
+    await pool.end()
+    pools.delete(key)
+  }
+}
+
+// ==================== 外键 ====================
+
+export async function getForeignKeys(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<ForeignKeyInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        kcu.CONSTRAINT_NAME as name,
+        kcu.COLUMN_NAME as columnName,
+        kcu.REFERENCED_TABLE_NAME as refTable,
+        kcu.REFERENCED_COLUMN_NAME as refColumn,
+        rc.UPDATE_RULE as onUpdate,
+        rc.DELETE_RULE as onDelete
+      FROM information_schema.KEY_COLUMN_USAGE kcu
+      JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+        ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+        AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+      WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
+        AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+    `, [database, table])
+    return rows.map((r) => ({
+      name: r.name,
+      columnName: r.columnName,
+      referencedTable: r.refTable,
+      referencedColumnName: r.refColumn,
+      onUpdate: r.onUpdate,
+      onDelete: r.onDelete
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 触发器 ====================
+
+export async function getTableTriggers(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<TriggerInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        TRIGGER_NAME as name,
+        EVENT_MANIPULATION as event,
+        ACTION_TIMING as timing,
+        ACTION_STATEMENT as statement,
+        CREATED as created,
+        DEFINER as definer
+      FROM information_schema.TRIGGERS
+      WHERE TRIGGER_SCHEMA = ? AND EVENT_OBJECT_TABLE = ?
+      ORDER BY TRIGGER_NAME
+    `, [database, table])
+    return rows.map((r) => ({
+      name: r.name,
+      event: r.event,
+      timing: r.timing,
+      statement: r.statement,
+      created: r.created,
+      definer: r.definer
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 表选项 ====================
+
+export async function getTableOptions(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<TableOptions> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        ENGINE as engine,
+        TABLE_COLLATION as collation,
+        TABLE_COMMENT as comment,
+        AUTO_INCREMENT as autoIncrement,
+        ROW_FORMAT as rowFormat
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+    `, [database, table])
+
+    if (rows.length === 0) {
+      return {}
+    }
+
+    const r = rows[0]
+    let charset: string | undefined
+    if (r.collation) {
+      const [csRows] = await conn.query<RowDataPacket[]>(
+        `SELECT CHARACTER_SET_NAME as cs FROM information_schema.COLLATIONS WHERE COLLATION_NAME = ?`,
+        [r.collation]
+      )
+      if (csRows.length > 0) charset = csRows[0].cs
+    }
+
+    return {
+      engine: r.engine,
+      charset,
+      collation: r.collation,
+      comment: r.comment,
+      autoIncrement: r.autoIncrement,
+      rowFormat: r.rowFormat
+    }
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 表详细信息（常规） ====================
+
+export async function getTableDetails(
+  config: ConnectionConfig,
+  database: string,
+  table: string
+): Promise<TableDetails> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        TABLE_NAME as name,
+        TABLE_ROWS as \`rows\`,
+        DATA_LENGTH as dataSize,
+        INDEX_LENGTH as indexLength,
+        ENGINE as engine,
+        CREATE_TIME as createTime,
+        UPDATE_TIME as updateTime,
+        TABLE_COLLATION as collation,
+        ROW_FORMAT as rowFormat,
+        AUTO_INCREMENT as autoIncrement,
+        TABLE_COMMENT as comment
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+    `, [database, table])
+
+    if (rows.length === 0) {
+      return {
+        name: table, rows: 0, dataSize: 0, indexLength: 0, engine: '',
+        createTime: null, updateTime: null, collation: null,
+        rowFormat: null, autoIncrement: null, comment: null
+      }
+    }
+
+    const r = rows[0]
+    return {
+      name: r.name,
+      rows: r.rows ?? 0,
+      dataSize: r.dataSize ?? 0,
+      indexLength: r.indexLength ?? 0,
+      engine: r.engine ?? '',
+      createTime: r.createTime ?? null,
+      updateTime: r.updateTime ?? null,
+      collation: r.collation ?? null,
+      rowFormat: r.rowFormat ?? null,
+      autoIncrement: r.autoIncrement ?? null,
+      comment: r.comment ?? null
+    }
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 视图 ====================
+
+export async function getViews(
+  config: ConnectionConfig,
+  database: string
+): Promise<ViewInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        TABLE_NAME as name,
+        VIEW_DEFINITION as definition,
+        CHECK_OPTION as checkOption,
+        IS_UPDATABLE as updatable,
+        SECURITY_TYPE as security,
+        DEFINER as definer
+      FROM information_schema.VIEWS
+      WHERE TABLE_SCHEMA = ?
+      ORDER BY TABLE_NAME
+    `, [database])
+    return rows.map((r) => ({
+      name: r.name,
+      definition: r.definition,
+      checkOption: r.checkOption,
+      updatable: r.updatable === 'YES',
+      security: r.security,
+      definer: r.definer
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 函数/存储过程 ====================
+
+export async function getRoutines(
+  config: ConnectionConfig,
+  database: string
+): Promise<RoutineInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        ROUTINE_NAME as name,
+        ROUTINE_TYPE as type,
+        DTD_IDENTIFIER as returnType,
+        DEFINER as definer,
+        LAST_ALTERED as modified,
+        CREATED as created,
+        ROUTINE_COMMENT as comment,
+        IS_DETERMINISTIC as isDeterministic,
+        SECURITY_TYPE as securityType,
+        ROUTINE_DEFINITION as body
+      FROM information_schema.ROUTINES
+      WHERE ROUTINE_SCHEMA = ?
+      ORDER BY ROUTINE_TYPE, ROUTINE_NAME
+    `, [database])
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.type as 'FUNCTION' | 'PROCEDURE',
+      returnType: r.returnType,
+      definer: r.definer,
+      modified: r.modified,
+      created: r.created,
+      comment: r.comment,
+      deterministic: r.isDeterministic === 'YES',
+      security: r.securityType,
+      body: r.body
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 事件 ====================
+
+export async function getEvents(
+  config: ConnectionConfig,
+  database: string
+): Promise<EventInfo[]> {
+  const pool = getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        EVENT_NAME as name,
+        DEFINER as definer,
+        EVENT_TYPE as type,
+        STATUS as status,
+        STARTS as starts,
+        ENDS as ends,
+        LAST_EXECUTED as lastExecuted,
+        ON_COMPLETION as onCompletion,
+        EVENT_COMMENT as comment,
+        EVENT_DEFINITION as body
+      FROM information_schema.EVENTS
+      WHERE EVENT_SCHEMA = ?
+      ORDER BY EVENT_NAME
+    `, [database])
+    return rows.map((r) => ({
+      name: r.name,
+      definer: r.definer,
+      type: r.type,
+      status: r.status,
+      starts: r.starts ?? null,
+      ends: r.ends ?? null,
+      lastExecuted: r.lastExecuted ?? null,
+      onCompletion: r.onCompletion,
+      comment: r.comment,
+      body: r.body
+    }))
+  } finally {
+    conn.release()
+  }
+}

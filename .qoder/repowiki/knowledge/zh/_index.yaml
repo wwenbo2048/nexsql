@@ -1,0 +1,112 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: Q0DeR-MaG1C-BrAnCh-Fo2-NoN-GiT-Or-No-C0MmIt
+nodes_managed: true
+exported_at: "2026-06-25T11:03:43Z"
+modules:
+    "":
+        dir_name: NexSql 桌面数据库管理客户端
+        title: NexSql 桌面数据库管理客户端
+        scope:
+            - .gitignore
+            - .npmrc
+            - electron-builder.yml
+            - electron.vite.config.ts
+            - package.json
+            - postcss.config.js
+            - tailwind.config.js
+            - tsconfig.json
+            - tsconfig.node.json
+            - tsconfig.web.json
+        source_files: []
+        children:
+            - main_process
+            - renderer
+        depends_on: []
+        related_to: []
+    build_system:
+        dir_name: Electron-Vite 构建与多平台打包体系
+        title: Electron-Vite 构建与多平台打包体系
+        scope: []
+        source_files:
+            - package.json
+            - electron.vite.config.ts
+            - electron-builder.yml
+        children: []
+        depends_on: []
+        related_to: []
+    configuration_system:
+        dir_name: 基于 electron-store 的持久化配置与构建层配置
+        title: 基于 electron-store 的持久化配置与构建层配置
+        scope: []
+        source_files:
+            - src/main/ipc.ts
+            - electron.vite.config.ts
+            - electron-builder.yml
+            - src/renderer/src/stores/connection.ts
+            - package.json
+        children: []
+        depends_on: []
+        related_to: []
+    dependency_management:
+        dir_name: Electron-Vite 依赖管理与镜像配置
+        title: Electron-Vite 依赖管理与镜像配置
+        scope: []
+        source_files:
+            - package.json
+            - .npmrc
+            - electron-builder.yml
+            - electron.vite.config.ts
+        children: []
+        depends_on: []
+        related_to: []
+    error_handling:
+        dir_name: 基于 IPC 的统一响应契约与错误透传
+        title: 基于 IPC 的统一响应契约与错误透传
+        scope: []
+        source_files:
+            - src/shared/types/index.ts
+            - src/main/ipc.ts
+            - src/main/services/db.ts
+            - src/preload/index.ts
+            - src/renderer/src/stores/connection.ts
+            - src/renderer/src/components/ConnectionModal.tsx
+            - src/renderer/src/components/QueryEditor.tsx
+        children: []
+        depends_on: []
+        related_to: []
+    frontend_style:
+        dir_name: 前端视觉风格与主题系统
+        title: 前端视觉风格与主题系统
+        scope: []
+        source_files:
+            - tailwind.config.js
+            - src/renderer/src/index.css
+            - postcss.config.js
+            - package.json
+            - src/renderer/src/App.tsx
+            - src/renderer/src/components/Sidebar.tsx
+        children: []
+        depends_on: []
+        related_to: []
+    main_process:
+        dir_name: Electron 主进程与数据库桥接
+        title: Electron 主进程与数据库桥接
+        scope:
+            - src/main/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: renderer
+    renderer:
+        dir_name: 桌面端用户界面与状态管理
+        title: 桌面端用户界面与状态管理
+        scope:
+            - src/renderer/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: main_process

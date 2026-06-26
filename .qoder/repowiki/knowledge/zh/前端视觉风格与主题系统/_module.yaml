@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: frontend_style
+title: 前端视觉风格与主题系统
+scope: []
+source_files:
+    - tailwind.config.js
+    - src/renderer/src/index.css
+    - postcss.config.js
+    - package.json
+    - src/renderer/src/App.tsx
+    - src/renderer/src/components/Sidebar.tsx
+depends_on: []
+related_to: []

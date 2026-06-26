@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: dependency_management
+title: Electron-Vite 依赖管理与镜像配置
+scope: []
+source_files:
+    - package.json
+    - .npmrc
+    - electron-builder.yml
+    - electron.vite.config.ts
+depends_on: []
+related_to: []

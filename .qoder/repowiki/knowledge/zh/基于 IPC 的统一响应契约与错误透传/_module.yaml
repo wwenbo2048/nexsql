@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: error_handling
+title: 基于 IPC 的统一响应契约与错误透传
+scope: []
+source_files:
+    - src/shared/types/index.ts
+    - src/main/ipc.ts
+    - src/main/services/db.ts
+    - src/preload/index.ts
+    - src/renderer/src/stores/connection.ts
+    - src/renderer/src/components/ConnectionModal.tsx
+    - src/renderer/src/components/QueryEditor.tsx
+depends_on: []
+related_to: []

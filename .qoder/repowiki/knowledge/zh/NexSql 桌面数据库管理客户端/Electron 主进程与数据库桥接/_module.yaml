@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: main_process
+title: Electron 主进程与数据库桥接
+scope:
+    - src/main/
+source_files: []
+depends_on: []
+related_to:
+    - path: renderer

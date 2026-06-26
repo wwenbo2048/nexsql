@@ -1,0 +1,42 @@
+{
+  "name": "nexsql",
+  "version": "1.0.0",
+  "description": "nexSql - A modern database management tool",
+  "main": "./out/main/index.js",
+  "author": "nexSql",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:win": "electron-vite build && electron-builder --win",
+    "build:linux": "electron-vite build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
+    "electron-store": "^8.2.0",
+    "lucide-react": "^0.344.0",
+    "monaco-editor": "^0.46.0",
+    "mysql2": "^3.9.2",
+    "react": "^18.2.0",
+    "react-data-grid": "7.0.0-beta.43",
+    "react-dom": "^18.2.0",
+    "sql-formatter": "^15.8.2",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.18",
+    "electron": "^29.1.5",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.0.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.4"
+  }
+}
