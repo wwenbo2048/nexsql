@@ -1,5 +1,6 @@
-import mysql, { type Pool, type RowDataPacket, type FieldPacket } from 'mysql2/promise'
-import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, RoutineInfo, EventInfo, QueryResult } from '../../shared/types'
+import mysql, { type Pool, type RowDataPacket, type FieldPacket, type PoolOptions } from 'mysql2/promise'
+import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, ViewInfo, RoutineInfo, EventInfo, QueryResult } from '../../shared/types'
+import { createTunnel, closeTunnel, closeAllTunnels, needsTunnel } from './ssh-tunnel'
 
 // 连接池管理
 const pools = new Map<string, Pool>()
@@ -8,10 +9,14 @@ function getPoolKey(config: ConnectionConfig): string {
   return config.id
 }
 
-function createPool(config: ConnectionConfig): Pool {
-  const pool = mysql.createPool({
-    host: config.host,
-    port: config.port,
+/**
+ * 构建 mysql2 连接选项，支持 SSH 隧道和 SSL。
+ * 调用前需确保 SSH 隧道已创建（使用 await getPool 或 ensureTunnel）。
+ */
+function buildPoolOptions(config: ConnectionConfig, localPort?: number): PoolOptions {
+  const opts: PoolOptions = {
+    host: localPort ? '127.0.0.1' : config.host,
+    port: localPort ?? config.port,
     user: config.user,
     password: config.password,
     database: config.database,
@@ -22,28 +27,39 @@ function createPool(config: ConnectionConfig): Pool {
     charset: 'utf8mb4',
     timezone: '+00:00',
     dateStrings: true
-  })
+  }
+  if (config.sslEnabled) {
+    opts.ssl = { rejectUnauthorized: false }
+  }
+  return opts
+}
+
+async function createPool(config: ConnectionConfig): Promise<Pool> {
+  let localPort: number | undefined
+  if (needsTunnel(config)) {
+    localPort = await createTunnel(config)
+  }
+  const pool = mysql.createPool(buildPoolOptions(config, localPort))
   pools.set(getPoolKey(config), pool)
   return pool
 }
 
-function getPool(config: ConnectionConfig): Pool {
+export async function getPool(config: ConnectionConfig): Promise<Pool> {
   let pool = pools.get(getPoolKey(config))
   if (!pool) {
-    pool = createPool(config)
+    pool = await createPool(config)
   }
   return pool
 }
 
 export async function testConnection(config: ConnectionConfig): Promise<boolean> {
+  let tunnelPort: number | undefined
+  if (needsTunnel(config)) {
+    tunnelPort = await createTunnel(config)
+  }
   const tempPool = mysql.createPool({
-    host: config.host,
-    port: config.port,
-    user: config.user,
-    password: config.password,
-    database: config.database,
-    connectionLimit: 1,
-    connectTimeout: config.connectTimeout ?? 10000
+    ...buildPoolOptions(config, tunnelPort),
+    connectionLimit: 1
   })
   try {
     const conn = await tempPool.getConnection()
@@ -52,11 +68,12 @@ export async function testConnection(config: ConnectionConfig): Promise<boolean>
     return true
   } finally {
     await tempPool.end()
+    if (needsTunnel(config)) closeTunnel(config.id)
   }
 }
 
 export async function connect(config: ConnectionConfig): Promise<void> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   await conn.ping()
   conn.release()
@@ -68,6 +85,7 @@ export async function disconnect(configId: string): Promise<void> {
     await pool.end()
     pools.delete(configId)
   }
+  closeTunnel(configId)
 }
 
 export async function executeQuery(
@@ -75,7 +93,7 @@ export async function executeQuery(
   sql: string,
   database?: string
 ): Promise<QueryResult> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
 
   try {
@@ -84,17 +102,17 @@ export async function executeQuery(
     }
 
     const startTime = performance.now()
-    const [result] = await conn.query(sql)
+    const [result, fields] = await conn.query(sql)
     const duration = performance.now() - startTime
 
     // 处理查询结果
     if (Array.isArray(result)) {
       // SELECT 查询
       const rows = result as RowDataPacket[]
-      const fields = (await conn.query(sql))[1] as FieldPacket[]
+      const fieldPackets = fields as FieldPacket[]
 
       return {
-        columns: fields.map((f) => ({
+        columns: fieldPackets.map((f) => ({
           name: f.name,
           type: f.type !== undefined ? String(f.type) : 'unknown',
           nullable: (f.flags & 0x0001) === 0
@@ -135,7 +153,7 @@ export async function executeQuery(
 }
 
 export async function getDatabases(config: ConnectionConfig): Promise<DatabaseInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(
@@ -158,7 +176,7 @@ export async function getTables(
   config: ConnectionConfig,
   database: string
 ): Promise<TableInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     await conn.changeUser({ database })
@@ -192,7 +210,7 @@ export async function getTableColumns(
   database: string,
   table: string
 ): Promise<ColumnInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -228,7 +246,7 @@ export async function getTableIndexes(
   database: string,
   table: string
 ): Promise<IndexInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -257,7 +275,7 @@ export async function getTableRowCount(
   database: string,
   table: string
 ): Promise<number> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     await conn.changeUser({ database })
@@ -273,7 +291,7 @@ export async function getTableDDL(
   database: string,
   table: string
 ): Promise<string> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     await conn.changeUser({ database })
@@ -292,6 +310,7 @@ export async function disconnectAll(): Promise<void> {
     await pool.end()
     pools.delete(key)
   }
+  closeAllTunnels()
 }
 
 // ==================== 外键 ====================
@@ -301,7 +320,7 @@ export async function getForeignKeys(
   database: string,
   table: string
 ): Promise<ForeignKeyInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -339,7 +358,7 @@ export async function getTableTriggers(
   database: string,
   table: string
 ): Promise<TriggerInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -374,7 +393,7 @@ export async function getTableOptions(
   database: string,
   table: string
 ): Promise<TableOptions> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -422,7 +441,7 @@ export async function getTableDetails(
   database: string,
   table: string
 ): Promise<TableDetails> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -475,7 +494,7 @@ export async function getViews(
   config: ConnectionConfig,
   database: string
 ): Promise<ViewInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -509,7 +528,7 @@ export async function getRoutines(
   config: ConnectionConfig,
   database: string
 ): Promise<RoutineInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -551,7 +570,7 @@ export async function getEvents(
   config: ConnectionConfig,
   database: string
 ): Promise<EventInfo[]> {
-  const pool = getPool(config)
+  const pool = await getPool(config)
   const conn = await pool.getConnection()
   try {
     const [rows] = await conn.query<RowDataPacket[]>(`
@@ -582,6 +601,176 @@ export async function getEvents(
       comment: r.comment,
       body: r.body
     }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== ER 关系（全库外键） ====================
+
+export interface ERRelation {
+  fromTable: string
+  fromColumn: string
+  toTable: string
+  toColumn: string
+  constraintName: string
+}
+
+export async function getAllForeignKeys(
+  config: ConnectionConfig,
+  database: string
+): Promise<ERRelation[]> {
+  const pool = await getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        kcu.TABLE_NAME as fromTable,
+        kcu.COLUMN_NAME as fromColumn,
+        kcu.REFERENCED_TABLE_NAME as toTable,
+        kcu.REFERENCED_COLUMN_NAME as toColumn,
+        kcu.CONSTRAINT_NAME as constraintName
+      FROM information_schema.KEY_COLUMN_USAGE kcu
+      WHERE kcu.TABLE_SCHEMA = ?
+        AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+    `, [database])
+    return rows.map((r) => ({
+      fromTable: r.fromTable,
+      fromColumn: r.fromColumn,
+      toTable: r.toTable,
+      toColumn: r.toColumn,
+      constraintName: r.constraintName
+    }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 全库表列（用于 ER 图） ====================
+
+export interface ERTableColumns {
+  table: string
+  columns: { name: string; type: string; isPK: boolean }[]
+}
+
+export async function getAllTableColumns(
+  config: ConnectionConfig,
+  database: string
+): Promise<ERTableColumns[]> {
+  const pool = await getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(`
+      SELECT
+        TABLE_NAME as \`table\`,
+        COLUMN_NAME as \`name\`,
+        COLUMN_TYPE as \`type\`,
+        COLUMN_KEY as columnKey
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ?
+      ORDER BY TABLE_NAME, ORDINAL_POSITION
+    `, [database])
+    const map = new Map<string, { name: string; type: string; isPK: boolean }[]>()
+    for (const r of rows) {
+      const tbl = r.table as string
+      if (!map.has(tbl)) map.set(tbl, [])
+      map.get(tbl)!.push({ name: r.name as string, type: r.type as string, isPK: r.columnKey === 'PRI' })
+    }
+    return Array.from(map.entries()).map(([table, columns]) => ({ table, columns }))
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 数据库备份 (SQL Dump) ====================
+
+export interface DumpOptions {
+  tables: string[]        // 要导出的表名，空数组表示全部
+  includeData: boolean    // 是否包含数据
+  includeStructure: boolean // 是否包含表结构
+}
+
+export interface DumpProgress {
+  current: string
+  index: number
+  total: number
+}
+
+export async function dumpDatabase(
+  config: ConnectionConfig,
+  database: string,
+  options: DumpOptions,
+  onProgress?: (p: DumpProgress) => void
+): Promise<string> {
+  const pool = await getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    await conn.changeUser({ database })
+
+    // 获取要导出的表列表
+    let tableList = options.tables
+    if (tableList.length === 0) {
+      const [rows] = await conn.query<RowDataPacket[]>(
+        `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+        [database]
+      )
+      tableList = rows.map((r) => r.TABLE_NAME as string)
+    }
+
+    let sql = `-- nexSQL 数据库备份\n`
+    sql += `-- 数据库: ${database}\n`
+    sql += `-- 服务器: ${config.host}:${config.port}\n`
+    sql += `-- 生成时间: ${new Date().toISOString()}\n\n`
+    sql += `SET NAMES utf8mb4;\n`
+    sql += `SET FOREIGN_KEY_CHECKS = 0;\n\n`
+
+    for (let i = 0; i < tableList.length; i++) {
+      const table = tableList[i]
+      onProgress?.({ current: table, index: i + 1, total: tableList.length })
+
+      sql += `-- -------------------------------------------\n`
+      sql += `-- 表: ${table}\n`
+      sql += `-- -------------------------------------------\n\n`
+
+      if (options.includeStructure) {
+        sql += `DROP TABLE IF EXISTS \`${table}\`;\n`
+        const [createRows] = await conn.query<RowDataPacket[]>(`SHOW CREATE TABLE \`${table}\``)
+        if (createRows.length > 0) {
+          sql += (createRows[0] as Record<string, unknown>)['Create Table'] as string
+          sql += ';\n\n'
+        }
+      }
+
+      if (options.includeData) {
+        const [dataRows] = await conn.query<RowDataPacket[]>(`SELECT * FROM \`${table}\``)
+        if (dataRows.length > 0) {
+          sql += `-- 数据: ${dataRows.length} 行\n`
+          const cols = Object.keys(dataRows[0])
+          const colNames = cols.map((c) => `\`${c}\``).join(', ')
+
+          // 批量插入 (每 50 行一批)
+          const BATCH = 50
+          for (let j = 0; j < dataRows.length; j += BATCH) {
+            const batch = dataRows.slice(j, j + BATCH)
+            const values = batch.map((row) => {
+              const vals = cols.map((c) => {
+                const v = row[c]
+                if (v === null || v === undefined) return 'NULL'
+                if (typeof v === 'number') return String(v)
+                if (typeof v === 'boolean') return v ? '1' : '0'
+                if (v instanceof Date) return `'${v.toISOString().slice(0, 19).replace('T', ' ')}'`
+                return `'${String(v).replace(/'/g, "''")}'`
+              })
+              return `(${vals.join(', ')})`
+            })
+            sql += `INSERT INTO \`${table}\` (${colNames}) VALUES\n${values.join(',\n')};\n\n`
+          }
+        }
+      }
+    }
+
+    sql += `SET FOREIGN_KEY_CHECKS = 1;\n`
+    return sql
   } finally {
     conn.release()
   }

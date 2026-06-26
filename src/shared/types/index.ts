@@ -4,6 +4,7 @@ export interface ConnectionConfig {
   id: string
   name: string
   group?: string
+  tags?: string[]
   type: 'mysql'
   host: string
   port: number

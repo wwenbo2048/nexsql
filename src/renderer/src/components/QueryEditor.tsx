@@ -8,11 +8,16 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  Trash2
+  Trash2,
+  History,
+  Activity
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
+import { useHistoryStore } from '@stores/history'
 import type { Tab, QueryResult } from '@shared/types'
+import QueryHistoryPanel from './QueryHistoryPanel'
+import ExplainPlanView from './ExplainPlanView'
 
 interface Props {
   tab: Tab
@@ -26,10 +31,15 @@ export default function QueryEditor({ tab }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showResult, setShowResult] = useState(true)
+  const [showHistory, setShowHistory] = useState(false)
+  const [showExplain, setShowExplain] = useState(false)
+  const [explainData, setExplainData] = useState<{ rows: Record<string, unknown>[]; columns: { name: string; type: string; nullable: boolean }[]; treeText?: string } | null>(null)
+  const [explainLoading, setExplainLoading] = useState(false)
   const editorRef = useRef<Parameters<Parameters<typeof Editor>['0']['onMount']>[0] | null>(null)
   const connections = useConnectionStore((s) => s.connections)
   const resultPanelHeight = useUiStore((s) => s.resultPanelHeight)
   const setResultPanelHeight = useUiStore((s) => s.setResultPanelHeight)
+  const addHistoryEntry = useHistoryStore((s) => s.addEntry)
 
   const config = connections.find((c) => c.id === tab.connectionId)
 
@@ -55,11 +65,63 @@ export default function QueryEditor({ tab }: Props) {
     const res = await window.api.db.query(config, sqlToExecute, tab.database)
     setLoading(false)
 
+    // 记录查询历史
+    addHistoryEntry({
+      sql: sqlToExecute,
+      connectionId: config.id,
+      database: tab.database,
+      duration: res.data?.duration ?? 0,
+      rowCount: res.data?.rows.length ?? res.data?.affectedRows ?? 0,
+      hasError: !res.success,
+      error: res.error
+    })
+
     if (res.success && res.data) {
       setResult(res.data)
     } else {
       setError(res.error ?? '查询失败')
       setResult(null)
+    }
+  }, [config, sql, tab.database, addHistoryEntry])
+
+  const handleExplain = useCallback(async () => {
+    if (!config) return
+    let sqlToExplain = sql
+    if (editorRef.current) {
+      const editor = editorRef.current
+      const selection = editor.getSelection()
+      if (selection && !selection.isEmpty()) {
+        sqlToExplain = editor.getModel()?.getValueInRange(selection) ?? sql
+      }
+    }
+    if (!sqlToExplain.trim()) return
+
+    setExplainLoading(true)
+    setShowExplain(true)
+    setShowResult(true)
+    setExplainData(null)
+
+    try {
+      // 先尝试 TREE 格式 (MySQL 8.0.16+)
+      const treeRes = await window.api.db.query(config, `EXPLAIN FORMAT=TREE ${sqlToExplain}`, tab.database)
+      if (treeRes.success && treeRes.data && treeRes.data.rows.length > 0) {
+        const treeText = String(treeRes.data.rows[0][Object.keys(treeRes.data.rows[0])[0]] ?? '')
+        setExplainData({ rows: [], columns: [], treeText })
+        setExplainLoading(false)
+        return
+      }
+
+      // 回退到标准 EXPLAIN
+      const res = await window.api.db.query(config, `EXPLAIN ${sqlToExplain}`, tab.database)
+      if (res.success && res.data) {
+        setExplainData({ rows: res.data.rows, columns: res.data.columns })
+      } else {
+        setError(res.error ?? 'EXPLAIN 执行失败')
+      }
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setExplainLoading(false)
     }
   }, [config, sql, tab.database])
 
@@ -157,6 +219,23 @@ export default function QueryEditor({ tab }: Props) {
         >
           {showResult ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           结果
+        </button>
+        <button
+          onClick={() => setShowHistory((v) => !v)}
+          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${showHistory ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:text-text-primary'}`}
+          title="查询历史"
+        >
+          <History size={14} />
+          历史
+        </button>
+        <button
+          onClick={handleExplain}
+          disabled={explainLoading || !config}
+          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${showExplain ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:text-text-primary'} disabled:opacity-50`}
+          title="执行计划 (EXPLAIN)"
+        >
+          {explainLoading ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
+          计划
         </button>
         {config && (
           <div className="ml-auto text-xs text-text-muted">
@@ -322,6 +401,24 @@ export default function QueryEditor({ tab }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* 执行计划面板 */}
+      {showExplain && explainData && (
+        <div className="flex-1 border-t border-border-light overflow-hidden" style={{ minHeight: 150 }}>
+          <ExplainPlanView rows={explainData.rows} columns={explainData.columns} treeText={explainData.treeText} />
+        </div>
+      )}
+
+      {/* 查询历史面板 */}
+      {showHistory && (
+        <QueryHistoryPanel
+          onSelectSql={(historySql: string) => {
+            setSql(historySql)
+            setShowHistory(false)
+          }}
+          onClose={() => setShowHistory(false)}
+        />
       )}
     </div>
   )

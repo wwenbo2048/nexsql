@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Plug, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { X, Plug, Loader2, CheckCircle2, AlertCircle, Lock, Server } from 'lucide-react'
 import { useUiStore } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
 import type { ConnectionConfig } from '@shared/types'
@@ -101,6 +101,33 @@ export default function ConnectionModal() {
             />
           </div>
 
+          {/* 分组 */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">分组</label>
+            <input
+              type="text"
+              value={config.group ?? ''}
+              onChange={(e) => setConfig({ ...config, group: e.target.value || undefined })}
+              placeholder="例如：开发环境、生产环境"
+              className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+            />
+          </div>
+
+          {/* 标签 */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">标签</label>
+            <input
+              type="text"
+              value={(config.tags ?? []).join(', ')}
+              onChange={(e) => {
+                const tags = e.target.value.split(/[,\uff0c]/).map((s) => s.trim()).filter(Boolean)
+                setConfig({ ...config, tags: tags.length > 0 ? tags : undefined })
+              }}
+              placeholder="多个标签用逗号分隔，例如：核心, 只读, 测试"
+              className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+            />
+          </div>
+
           {/* 颜色标签 */}
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-2">标签颜色</label>
@@ -175,6 +202,92 @@ export default function ConnectionModal() {
               placeholder="可选"
               className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
             />
+          </div>
+
+          {/* SSL 开关 */}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!config.sslEnabled}
+                onChange={(e) => setConfig({ ...config, sslEnabled: e.target.checked })}
+                className="w-4 h-4 accent-accent"
+              />
+              <Lock size={14} className="text-text-secondary" />
+              <span className="text-sm text-text-primary">启用 SSL 加密连接</span>
+            </label>
+          </div>
+
+          {/* SSH 隧道 */}
+          <div className="border border-border-light rounded-lg">
+            <label className="flex items-center gap-2 px-4 py-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!config.sshEnabled}
+                onChange={(e) => setConfig({ ...config, sshEnabled: e.target.checked })}
+                className="w-4 h-4 accent-accent"
+              />
+              <Server size={14} className="text-text-secondary" />
+              <span className="text-sm text-text-primary font-medium">通过 SSH 隧道连接</span>
+            </label>
+
+            {config.sshEnabled && (
+              <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-3">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">SSH 主机</label>
+                    <input
+                      type="text"
+                      value={config.sshHost ?? ''}
+                      onChange={(e) => setConfig({ ...config, sshHost: e.target.value })}
+                      placeholder="例如：ssh.example.com"
+                      className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
+                  <div className="w-24">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">端口</label>
+                    <input
+                      type="number"
+                      value={config.sshPort ?? 22}
+                      onChange={(e) => setConfig({ ...config, sshPort: parseInt(e.target.value) || 22 })}
+                      className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">SSH 用户名</label>
+                    <input
+                      type="text"
+                      value={config.sshUser ?? ''}
+                      onChange={(e) => setConfig({ ...config, sshUser: e.target.value })}
+                      placeholder="root"
+                      className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">SSH 密码</label>
+                    <input
+                      type="password"
+                      value={config.sshPassword ?? ''}
+                      onChange={(e) => setConfig({ ...config, sshPassword: e.target.value })}
+                      placeholder="可选"
+                      className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">私钥路径（可选）</label>
+                  <input
+                    type="text"
+                    value={config.sshPrivateKey ?? ''}
+                    onChange={(e) => setConfig({ ...config, sshPrivateKey: e.target.value })}
+                    placeholder="例如：C:\Users\you\.ssh\id_rsa"
+                    className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 测试结果 */}

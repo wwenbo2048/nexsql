@@ -65,6 +65,39 @@ function isDateType(type: string): boolean {
   return t.includes('date') || t.includes('time') || t.includes('timestamp')
 }
 
+function isBinaryType(type: string): boolean {
+  const t = type.toLowerCase()
+  return t.includes('blob') || t.includes('binary') || t.includes('bit')
+}
+
+function isJsonString(val: unknown): boolean {
+  if (typeof val !== 'string') return false
+  const s = val.trim()
+  return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))
+}
+
+function formatJsonPreview(val: string): string {
+  try {
+    return JSON.stringify(JSON.parse(val), null, 2)
+  } catch {
+    return val
+  }
+}
+
+function toHexPreview(val: unknown, maxBytes: number = 16): string {
+  if (val instanceof ArrayBuffer || val instanceof Uint8Array) {
+    const bytes = val instanceof ArrayBuffer ? new Uint8Array(val) : val
+    const hex = Array.from(bytes.slice(0, maxBytes)).map((b) => b.toString(16).padStart(2, '0')).join(' ')
+    return bytes.length > maxBytes ? hex + ' …' : hex
+  }
+  // Buffer / string fallback
+  const str = String(val)
+  if (/^[\x00-\x1f]+$/.test(str)) {
+    return Array.from(str.slice(0, maxBytes)).map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ')
+  }
+  return str
+}
+
 interface RowData {
   _row_key: string
   _row_num: number
@@ -418,17 +451,40 @@ export default function DataTable({ tab }: Props) {
 
     setLoading(true)
     let failCount = 0
-    for (const sql of sqls) {
-      const res = await window.api.db.query(config, sql, tab.database)
-      if (!res.success) {
-        failCount++
-        showMsg('error', `执行失败 (${failCount}/${opCount}): ${res.error}`)
-        break
-      }
-    }
-    setLoading(false)
+    let committed = false
 
-    if (failCount === 0) {
+    // 开启事务
+    const beginRes = await window.api.db.query(config, 'START TRANSACTION', tab.database)
+    if (!beginRes.success) {
+      setLoading(false)
+      showMsg('error', `无法开启事务: ${beginRes.error}`)
+      return
+    }
+
+    try {
+      for (let i = 0; i < sqls.length; i++) {
+        const res = await window.api.db.query(config, sqls[i], tab.database)
+        if (!res.success) {
+          failCount = i + 1
+          throw new Error(res.error ?? '未知错误')
+        }
+      }
+
+      // 全部成功，提交事务
+      const commitRes = await window.api.db.query(config, 'COMMIT', tab.database)
+      if (!commitRes.success) {
+        throw new Error(`COMMIT 失败: ${commitRes.error}`)
+      }
+      committed = true
+    } catch (err) {
+      // 失败，回滚事务
+      await window.api.db.query(config, 'ROLLBACK', tab.database)
+      showMsg('error', `事务已回滚 (${failCount}/${opCount}): ${(err as Error).message}`)
+    } finally {
+      setLoading(false)
+    }
+
+    if (committed) {
       showMsg('success', `成功提交 ${opCount} 条更改`)
       await loadData()
     }
@@ -667,12 +723,59 @@ export default function DataTable({ tab }: Props) {
             )
           }
           const str = typeof val === 'object' ? JSON.stringify(val) : String(val)
+          // JSON 内容
+          if (isJsonString(str)) {
+            const formatted = formatJsonPreview(str)
+            const preview = str.length > 60 ? str.slice(0, 60) + '…' : str
+            return (
+              <div
+                onClick={() => { setEditorRowKey(row._row_key); setEditorColName(col.name) }}
+                onContextMenu={(e) => handleCellContextMenu(e, row._row_key, col.name, col.type)}
+                className={`w-full h-full flex items-center gap-1 ${baseClass}`}
+                title={formatted}
+              >
+                <span className="text-[9px] px-0.5 rounded bg-purple-900/50 text-purple-300 flex-shrink-0">JSON</span>
+                <span className="truncate block font-mono text-xs text-purple-300">{preview}</span>
+              </div>
+            )
+          }
+          // 二进制/BLOB
+          if (isBinaryType(col.type)) {
+            const hex = toHexPreview(val)
+            return (
+              <div
+                onClick={() => { setEditorRowKey(row._row_key); setEditorColName(col.name) }}
+                onContextMenu={(e) => handleCellContextMenu(e, row._row_key, col.name, col.type)}
+                className={`w-full h-full flex items-center gap-1 ${baseClass}`}
+                title={hex}
+              >
+                <span className="text-[9px] px-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0">BIN</span>
+                <span className="truncate block font-mono text-xs text-gray-400">{hex}</span>
+              </div>
+            )
+          }
+          // 布尔值
+          if (typeof val === 'boolean' || (typeof val === 'number' && (val === 0 || val === 1) && col.type.toLowerCase().includes('tinyint') && col.type.toLowerCase().includes('1'))) {
+            const isTrue = val === true || val === 1
+            return (
+              <div
+                onClick={() => { setEditorRowKey(row._row_key); setEditorColName(col.name) }}
+                onContextMenu={(e) => handleCellContextMenu(e, row._row_key, col.name, col.type)}
+                className={`w-full h-full flex items-center ${baseClass}`}
+              >
+                <span className={`text-[10px] px-1 rounded font-medium ${isTrue ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+                  {isTrue ? 'TRUE' : 'FALSE'}
+                </span>
+              </div>
+            )
+          }
+          // 普通文本（增强 tooltip）
           return (
             <div
               onClick={() => { setEditorRowKey(row._row_key); setEditorColName(col.name) }}
               onContextMenu={(e) => handleCellContextMenu(e, row._row_key, col.name, col.type)}
               className={`w-full h-full flex items-center ${baseClass}`}
-              title={str}
+              title={str.length > 80 ? str.slice(0, 500) + (str.length > 500 ? `\n… (共 ${str.length} 字符)` : '') : str}
             >
               <span className="truncate block">{str}</span>
             </div>

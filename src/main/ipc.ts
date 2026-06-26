@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow, dialog } from 'electron'
 import { writeFile, readFile } from 'fs/promises'
 import Store from 'electron-store'
 import { uuidv4 } from './uuid'
+import { encryptPassword, decryptPassword } from './crypto'
 import type { ConnectionConfig, IpcResponse } from '../shared/types'
 import * as db from './services/db'
 
@@ -48,20 +49,37 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
   // ==================== 连接配置存储 ====================
 
   ipcMain.handle('config:getConnections', () => {
-    return store.get('connections', [])
+    const connections = store.get('connections', [])
+    // 返回时解密密码
+    return connections.map((c) => ({
+      ...c,
+      password: decryptPassword(c.password) ?? '',
+      sshPassword: decryptPassword(c.sshPassword)
+    }))
   })
 
   ipcMain.handle('config:saveConnection', (_event, config: ConnectionConfig) => {
     const connections = store.get('connections', [])
     const idx = connections.findIndex((c) => c.id === config.id)
+    // 保存前加密密码
+    const encrypted: ConnectionConfig = {
+      ...config,
+      password: encryptPassword(config.password) ?? config.password,
+      sshPassword: encryptPassword(config.sshPassword)
+    }
     if (idx >= 0) {
-      connections[idx] = config
+      connections[idx] = encrypted
     } else {
-      config.id = config.id || uuidv4()
-      connections.push(config)
+      encrypted.id = encrypted.id || uuidv4()
+      connections.push(encrypted)
     }
     store.set('connections', connections)
-    return config
+    // 返回解密版本给前端
+    return {
+      ...encrypted,
+      password: decryptPassword(encrypted.password) ?? '',
+      sshPassword: decryptPassword(encrypted.sshPassword)
+    }
   })
 
   ipcMain.handle('config:deleteConnection', (_event, id: string) => {
@@ -280,6 +298,77 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     }
   )
 
+  // ==================== ER 图数据 ====================
+
+  ipcMain.handle(
+    'db:getERRelations',
+    async (_event, config: ConnectionConfig, database: string) => {
+      try {
+        const data = await db.getAllForeignKeys(config, database)
+        return { success: true, data }
+      } catch (err) {
+        logError('db:getERRelations', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'db:getERTableColumns',
+    async (_event, config: ConnectionConfig, database: string) => {
+      try {
+        const data = await db.getAllTableColumns(config, database)
+        return { success: true, data }
+      } catch (err) {
+        logError('db:getERTableColumns', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  // ==================== 数据库备份/恢复 ====================
+
+  ipcMain.handle(
+    'db:dumpDatabase',
+    async (_event, config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }) => {
+      try {
+        const sql = await db.dumpDatabase(config, database, options)
+        return { success: true, data: sql }
+      } catch (err) {
+        logError('db:dumpDatabase', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'db:restoreDatabase',
+    async (_event, config: ConnectionConfig, database: string, sql: string) => {
+      try {
+        const pool = await db.getPool(config)
+        const conn = await pool.getConnection()
+        try {
+          await conn.changeUser({ database })
+          // 按 ; 分割并逐条执行
+          const statements = sql.split(';').map((s) => s.trim()).filter((s) => s && !s.startsWith('--'))
+          let executed = 0
+          for (const stmt of statements) {
+            if (stmt.length > 0) {
+              await conn.query(stmt)
+              executed++
+            }
+          }
+          return { success: true, data: { executed } }
+        } finally {
+          conn.release()
+        }
+      } catch (err) {
+        logError('db:restoreDatabase', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
   // ==================== 文件保存（导出） ====================
 
   ipcMain.handle(
@@ -350,5 +439,9 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
 }
 
 export function getStoredConnections(): ConnectionConfig[] {
-  return store.get('connections', [])
+  return store.get('connections', []).map((c) => ({
+    ...c,
+    password: decryptPassword(c.password) ?? '',
+    sshPassword: decryptPassword(c.sshPassword)
+  }))
 }

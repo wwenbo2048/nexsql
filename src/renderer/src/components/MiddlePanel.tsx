@@ -16,11 +16,15 @@ import {
   ArrowDown,
   ArrowUpDown,
   Terminal,
-  Bookmark
+  Bookmark,
+  Network,
+  FileCode2
 } from 'lucide-react'
 import { useBrowserStore, type DbCategory } from '@stores/browser'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
+import { useSnippetStore } from '@stores/snippet'
+import { setCompletionContext, getCompletionContext } from '@renderer/sql-completion'
 import type { TableInfo, ViewInfo, RoutineInfo, EventInfo } from '@shared/types'
 
 function formatBytes(bytes: number): string {
@@ -43,7 +47,9 @@ const CATEGORY_LABELS: Record<DbCategory, string> = {
   views: '视图',
   functions: '函数',
   events: '事件',
-  query: '查询'
+  query: '查询',
+  er: 'ER 图',
+  snippets: '片段'
 }
 
 export default function MiddlePanel() {
@@ -55,7 +61,8 @@ export default function MiddlePanel() {
     tables, views, routines, events,
     setTables, setViews, setRoutines, setEvents,
     listLoading, setListLoading,
-    listVersion, refreshList
+    listVersion, refreshList,
+    setCompareSource
   } = useBrowserStore()
 
   const [error, setError] = useState<string | null>(null)
@@ -99,6 +106,37 @@ export default function MiddlePanel() {
       loadData()
     }
   }, [config, selectedDatabase, selectedCategory, listVersion, loadData])
+
+  // 更新 SQL 补全上下文（表名 + 字段名）
+  useEffect(() => {
+    if (tables.length > 0) {
+      const ctx = getCompletionContext()
+      setCompletionContext({
+        tables: tables.map((t) => t.name),
+        columns: ctx.columns,
+        database: selectedDatabase ?? undefined
+      })
+    }
+  }, [tables, selectedDatabase])
+
+  // 选中表时加载字段名用于补全
+  useEffect(() => {
+    if (!config || !selectedDatabase || !selectedTable) return
+    const loadColumnsForCompletion = async () => {
+      const res = await window.api.db.getTableColumns(config, selectedDatabase, selectedTable)
+      if (res.success && res.data) {
+        const ctx = getCompletionContext()
+        setCompletionContext({
+          ...ctx,
+          columns: {
+            ...ctx.columns,
+            [selectedTable]: res.data!.map((c) => c.name)
+          }
+        })
+      }
+    }
+    loadColumnsForCompletion()
+  }, [config, selectedDatabase, selectedTable])
 
   const handleDelete = useCallback(async () => {
     if (!config || !selectedDatabase || !selectedTable) return
@@ -289,13 +327,18 @@ export default function MiddlePanel() {
       },
       { separator: true, label: '' },
       {
+        label: '对比表结构…',
+        onClick: () => setCompareSource({ table: tableName })
+      },
+      { separator: true, label: '' },
+      {
         label: '删除表',
         danger: true,
         onClick: () => handleDropTable(tableName)
       }
     ]
     setContextMenu({ x: e.clientX, y: e.clientY, items })
-  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, setContextMenu])
+  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, setContextMenu, setCompareSource])
 
   const tbBtn = "flex items-center gap-1 px-1.5 py-1 rounded text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-bg-hover text-text-secondary hover:text-text-primary"
 
@@ -315,7 +358,9 @@ export default function MiddlePanel() {
     { key: 'views', label: '视图', icon: Eye },
     { key: 'functions', label: '函数', icon: FunctionSquare },
     { key: 'events', label: '事件', icon: CalendarClock },
-    { key: 'query', label: '查询', icon: Terminal }
+    { key: 'query', label: '查询', icon: Terminal },
+    { key: 'er', label: 'ER 图', icon: Network },
+    { key: 'snippets', label: '片段', icon: FileCode2 }
   ]
 
   return (
@@ -437,6 +482,11 @@ export default function MiddlePanel() {
             {/* 查询列表 */}
             {selectedCategory === 'query' && (
               <QueryList />
+            )}
+
+            {/* SQL 片段列表 */}
+            {selectedCategory === 'snippets' && (
+              <SnippetList />
             )}
           </>
         )}
@@ -759,6 +809,55 @@ function QueryList() {
             onClick={(e) => { e.stopPropagation(); deleteQuery(q.id) }}
             className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-400 transition-all flex-shrink-0"
             title="删除查询"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+      ))}
+    </>
+  )
+}
+
+function SnippetList() {
+  const { snippets, selectedSnippetId, selectSnippet, deleteSnippet } = useSnippetStore()
+  const selectTable = useBrowserStore((s) => s.selectTable)
+
+  if (snippets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-text-muted text-xs gap-2">
+        <FileCode2 size={28} className="opacity-20" />
+        <span>暂无 SQL 片段</span>
+        <span className="text-[10px]">在右侧面板创建常用 SQL 模板</span>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {snippets.map((s: any) => (
+        <div
+          key={s.id}
+          onClick={() => { selectSnippet(s.id); selectTable(s.name) }}
+          className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 transition-colors group ${
+            selectedSnippetId === s.id
+              ? 'bg-accent/20 border-l-2 border-l-accent'
+              : 'hover:bg-bg-hover border-l-2 border-l-transparent'
+          }`}
+        >
+          <FileCode2 size={13} className="text-blue-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className={`text-xs truncate block ${selectedSnippetId === s.id ? 'text-text-primary font-medium' : 'text-text-primary/90'}`}>
+              {s.name}
+            </span>
+            <span className="text-[10px] text-text-muted truncate block font-mono mt-0.5">
+              {s.sql.split('\n')[0].slice(0, 50)}{s.sql.length > 50 ? '…' : ''}
+            </span>
+          </div>
+          <span className="text-[9px] text-text-muted bg-bg-primary px-1 rounded flex-shrink-0">{s.category}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); if (confirm('删除此片段？')) deleteSnippet(s.id) }}
+            className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-400 transition-all flex-shrink-0"
+            title="删除片段"
           >
             <Trash2 size={12} />
           </button>

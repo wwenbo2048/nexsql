@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import type { TableInfo, ViewInfo, RoutineInfo, EventInfo } from '@shared/types'
 
-export type DbCategory = 'tables' | 'views' | 'functions' | 'events' | 'query'
-export type DetailTab = 'info' | 'data' | 'structure' | 'ddl'
+export type DbCategory = 'tables' | 'views' | 'functions' | 'events' | 'query' | 'er' | 'snippets'
+export type DetailTab = 'info' | 'data' | 'structure' | 'ddl' | 'er'
 
 export interface SavedQuery {
   id: string
@@ -51,6 +51,7 @@ interface BrowserState {
   savedQueries: SavedQuery[]
   activeQuerySql: string
   selectedQueryId: string | null
+  compareSource: { table: string } | null
 
   // Actions
   selectDatabase: (connectionId: string, database: string) => void
@@ -70,6 +71,7 @@ interface BrowserState {
   stopCreating: () => void
   startEditing: () => void
   stopEditing: () => void
+  setCompareSource: (source: { table: string } | null) => void
   clearSelection: () => void
 }
 
@@ -90,6 +92,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   savedQueries: loadSavedQueries(),
   activeQuerySql: '',
   selectedQueryId: null,
+  compareSource: null,
 
   selectDatabase: (connectionId, database) =>
     set({
@@ -159,6 +162,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   startEditing: () => set({ isEditing: true }),
 
   stopEditing: () => set({ isEditing: false }),
+
+  setCompareSource: (source) => set({ compareSource: source }),
 
   clearSelection: () =>
     set({

@@ -64,7 +64,15 @@ const api = {
     getRoutines: (config: ConnectionConfig, database: string): Promise<IpcResponse<RoutineInfo[]>> =>
       ipcRenderer.invoke('db:getRoutines', config, database),
     getEvents: (config: ConnectionConfig, database: string): Promise<IpcResponse<EventInfo[]>> =>
-      ipcRenderer.invoke('db:getEvents', config, database)
+      ipcRenderer.invoke('db:getEvents', config, database),
+    getERRelations: (config: ConnectionConfig, database: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('db:getERRelations', config, database),
+    getERTableColumns: (config: ConnectionConfig, database: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('db:getERTableColumns', config, database),
+    dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }): Promise<IpcResponse<string>> =>
+      ipcRenderer.invoke('db:dumpDatabase', config, database, options),
+    restoreDatabase: (config: ConnectionConfig, database: string, sql: string): Promise<IpcResponse<{ executed: number }>> =>
+      ipcRenderer.invoke('db:restoreDatabase', config, database, sql)
   },
 
   // 文件操作

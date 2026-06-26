@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -15,7 +15,11 @@ import {
   Circle,
   FunctionSquare,
   CalendarClock,
-  FolderTree
+  FolderTree,
+  HardDriveDownload,
+  HardDriveUpload,
+  Tag,
+  FolderOpen
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useBrowserStore, type DbCategory } from '@stores/browser'
@@ -199,6 +203,63 @@ export default function ConnectionTree() {
     []
   )
 
+  // ==================== 数据库备份 ====================
+
+  const handleBackupDatabase = useCallback(
+    async (config: ConnectionConfig, dbName: string) => {
+      if (!confirm(`确定备份数据库 "${dbName}" 吗？\n将导出所有表结构和数据。`)) return
+      try {
+        const res = await window.api.db.dumpDatabase(config, dbName, {
+          tables: [],
+          includeData: true,
+          includeStructure: true
+        })
+        if (!res.success || !res.data) {
+          alert(`备份失败: ${res.error}`)
+          return
+        }
+        const saveRes = await window.api.file.saveDialog(
+          `${dbName}_backup_${new Date().toISOString().slice(0, 10)}.sql`,
+          res.data,
+          'sql'
+        )
+        if (saveRes.success && saveRes.data?.saved) {
+          alert(`数据库备份成功！\n保存至: ${saveRes.data.path}`)
+        }
+      } catch (err) {
+        alert(`备份失败: ${(err as Error).message}`)
+      }
+    },
+    []
+  )
+
+  // ==================== 数据库恢复 ====================
+
+  const handleRestoreDatabase = useCallback(
+    async (config: ConnectionConfig, dbName: string) => {
+      if (!confirm(`确定恢复数据库 "${dbName}" 吗？\n将执行 SQL 文件中的所有语句，可能会覆盖现有数据！`)) return
+      try {
+        const openRes = await window.api.file.openDialog('sql')
+        if (!openRes.success || openRes.data?.canceled || !openRes.data?.content) return
+        const res = await window.api.db.restoreDatabase(config, dbName, openRes.data.content)
+        if (res.success) {
+          alert(`数据库恢复成功！执行了 ${res.data?.executed ?? 0} 条语句。`)
+          // 刷新数据库列表
+          const dbRes = await window.api.db.getDatabases(config)
+          if (dbRes.success && dbRes.data) {
+            nodeCache.set(config.id, { ...nodeCache.get(config.id), databases: dbRes.data })
+            forceUpdate({})
+          }
+        } else {
+          alert(`恢复失败: ${res.error}`)
+        }
+      } catch (err) {
+        alert(`恢复失败: ${(err as Error).message}`)
+      }
+    },
+    []
+  )
+
   // 监听菜单栏新建数据库事件
   useEffect(() => {
     const onCreateDb = (e: Event) => {
@@ -278,6 +339,20 @@ export default function ConnectionTree() {
     [handleTableDoubleClick, openTab, setContextMenu]
   )
 
+  // 按分组归类连接（必须在条件 return 之前调用，遵守 Hooks 规则）
+  const groupedConnections = useMemo(() => {
+    const groups: Record<string, ConnectionConfig[]> = { '': [] }
+    for (const conn of connections) {
+      const g = conn.group ?? ''
+      if (!groups[g]) groups[g] = []
+      groups[g].push(conn)
+    }
+    return groups
+  }, [connections])
+
+  const groupNames = Object.keys(groupedConnections).filter(Boolean).sort()
+  const ungrouped = groupedConnections[''] ?? []
+
   if (connections.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-muted text-sm p-4">
@@ -288,138 +363,171 @@ export default function ConnectionTree() {
     )
   }
 
+  // 渲染单个连接节点
+  const renderConnection = (config: ConnectionConfig) => {
+    const status = statuses[config.id] ?? 'disconnected'
+    const error = errors[config.id]
+    const isExpanded = expandedConnections.has(config.id)
+    const cached = nodeCache.get(config.id)
+
+    return (
+      <div key={config.id}>
+        {/* 连接节点 */}
+        <div
+          className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-bg-hover group"
+          onClick={() => handleToggleConnection(config)}
+          onContextMenu={(e) => handleConnectionContextMenu(e, config)}
+        >
+          {status === 'connecting' ? (
+            <Loader2 size={14} className="animate-spin text-accent" />
+          ) : isExpanded ? (
+            <ChevronDown size={14} className="text-text-muted" />
+          ) : (
+            <ChevronRight size={14} className="text-text-muted" />
+          )}
+
+          {status === 'connected' ? (
+            <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
+          ) : status === 'connecting' ? (
+            <CheckCircle2 size={14} className="text-yellow-500 flex-shrink-0" />
+          ) : status === 'error' ? (
+            <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
+          ) : (
+            <Circle size={14} className="text-text-muted flex-shrink-0" />
+          )}
+
+          <span className="flex-1 truncate text-text-primary">{config.name}</span>
+          {/* 标签徽章 */}
+          {config.tags && config.tags.length > 0 && (
+            <div className="flex items-center gap-0.5 mr-1">
+              {config.tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[9px] px-1 rounded bg-accent/20 text-accent-light truncate max-w-[48px]"
+                  title={tag}
+                >
+                  {tag}
+                </span>
+              ))}
+              {config.tags.length > 2 && (
+                <span className="text-[9px] text-text-muted">+{config.tags.length - 2}</span>
+              )}
+            </div>
+          )}
+          <span className="text-text-muted text-xs hidden group-hover:inline">
+            {config.host}:{config.port}
+          </span>
+        </div>
+
+        {/* 错误提示 */}
+        {status === 'error' && error && (
+          <div className="ml-8 px-2 py-1 text-xs text-red-400 truncate" title={error}>
+            {error}
+          </div>
+        )}
+
+        {/* 数据库列表 */}
+        {isExpanded && status === 'connected' && cached?.databases && (
+          <div className="ml-4">
+            {cached.databases.map((db) => {
+              const dbKey = `${config.id}:${db.name}`
+              const dbExpanded = expandedConnections.has(dbKey)
+              const tables = cached.tables?.[db.name]
+
+              return (
+                <div key={db.name}>
+                  <div
+                    className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
+                    onClick={() => handleToggleDatabase(config, db)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setContextMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        items: [
+                          { label: '新建查询', onClick: () => handleNewQuery(config, db.name) },
+                          { label: '', separator: true },
+                          { label: '备份数据库', onClick: () => handleBackupDatabase(config, db.name) },
+                          { label: '恢复数据库', onClick: () => handleRestoreDatabase(config, db.name) },
+                          { label: '', separator: true },
+                          { label: '复制数据库名', onClick: () => navigator.clipboard.writeText(db.name) },
+                          { label: '', separator: true },
+                          { label: '删除数据库', danger: true, onClick: () => handleDeleteDatabase(config, db.name) }
+                        ]
+                      })
+                    }}
+                  >
+                    {dbExpanded ? (
+                      <ChevronDown size={12} className="text-text-muted" />
+                    ) : (
+                      <ChevronRight size={12} className="text-text-muted" />
+                    )}
+                    <DatabaseIcon size={14} className="text-accent-light flex-shrink-0" />
+                    <span className="flex-1 truncate text-text-primary/90">{db.name}</span>
+                  </div>
+
+                  {/* 展开后显示分类（表/视图/函数/事件） */}
+                  {dbExpanded && (
+                    <div className="ml-4">
+                      {CATEGORIES.map((cat) => {
+                        const tablesOnly = cat.key === 'tables'
+                          ? tables?.filter((t) => t.type === 'table').length ?? 0
+                          : 0
+                        const viewsCount = cat.key === 'views'
+                          ? tables?.filter((t) => t.type === 'view').length ?? 0
+                          : 0
+
+                        return (
+                          <div key={cat.key}>
+                            {/* 分类节点 */}
+                            <div
+                              className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
+                              onClick={() => handleCategoryClick(config, db, cat.key)}
+                            >
+                              <cat.icon size={13} className={`flex-shrink-0 ${
+                                cat.key === 'tables' ? 'text-blue-400' :
+                                cat.key === 'views' ? 'text-purple-400' :
+                                cat.key === 'functions' ? 'text-orange-400' :
+                                'text-green-400'
+                              }`} />
+                              <span className="flex-1 truncate text-text-secondary">{cat.label}</span>
+                              {cat.key === 'tables' && tablesOnly > 0 && (
+                                <span className="text-[9px] text-text-muted">{tablesOnly}</span>
+                              )}
+                              {cat.key === 'views' && viewsCount > 0 && (
+                                <span className="text-[9px] text-text-muted">{viewsCount}</span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <>
     <div className="py-1 text-sm select-none">
-      {connections.map((config) => {
-        const status = statuses[config.id] ?? 'disconnected'
-        const error = errors[config.id]
-        const isExpanded = expandedConnections.has(config.id)
-        const cached = nodeCache.get(config.id)
-
-        return (
-          <div key={config.id}>
-            {/* 连接节点 */}
-            <div
-              className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-bg-hover group"
-              onClick={() => handleToggleConnection(config)}
-              onContextMenu={(e) => handleConnectionContextMenu(e, config)}
-            >
-              {status === 'connecting' ? (
-                <Loader2 size={14} className="animate-spin text-accent" />
-              ) : isExpanded ? (
-                <ChevronDown size={14} className="text-text-muted" />
-              ) : (
-                <ChevronRight size={14} className="text-text-muted" />
-              )}
-
-              {status === 'connected' ? (
-                <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
-              ) : status === 'connecting' ? (
-                <CheckCircle2 size={14} className="text-yellow-500 flex-shrink-0" />
-              ) : status === 'error' ? (
-                <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
-              ) : (
-                <Circle size={14} className="text-text-muted flex-shrink-0" />
-              )}
-
-              <span className="flex-1 truncate text-text-primary">{config.name}</span>
-              <span className="text-text-muted text-xs hidden group-hover:inline">
-                {config.host}:{config.port}
-              </span>
-            </div>
-
-            {/* 错误提示 */}
-            {status === 'error' && error && (
-              <div className="ml-8 px-2 py-1 text-xs text-red-400 truncate" title={error}>
-                {error}
-              </div>
-            )}
-
-            {/* 数据库列表 */}
-            {isExpanded && status === 'connected' && cached?.databases && (
-              <div className="ml-4">
-                {cached.databases.map((db) => {
-                  const dbKey = `${config.id}:${db.name}`
-                  const dbExpanded = expandedConnections.has(dbKey)
-                  const tables = cached.tables?.[db.name]
-
-                  return (
-                    <div key={db.name}>
-                      <div
-                        className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
-                        onClick={() => handleToggleDatabase(config, db)}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setContextMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            items: [
-                              { label: '新建查询', onClick: () => handleNewQuery(config, db.name) },
-                              { label: '', separator: true },
-                              { label: '复制数据库名', onClick: () => navigator.clipboard.writeText(db.name) },
-                              { label: '', separator: true },
-                              { label: '删除数据库', danger: true, onClick: () => handleDeleteDatabase(config, db.name) }
-                            ]
-                          })
-                        }}
-                      >
-                        {dbExpanded ? (
-                          <ChevronDown size={12} className="text-text-muted" />
-                        ) : (
-                          <ChevronRight size={12} className="text-text-muted" />
-                        )}
-                        <DatabaseIcon size={14} className="text-accent-light flex-shrink-0" />
-                        <span className="flex-1 truncate text-text-primary/90">{db.name}</span>
-                      </div>
-
-                      {/* 展开后显示分类（表/视图/函数/事件） */}
-                      {dbExpanded && (
-                        <div className="ml-4">
-                          {CATEGORIES.map((cat) => {
-                            const tablesOnly = cat.key === 'tables'
-                              ? tables?.filter((t) => t.type === 'table').length ?? 0
-                              : 0
-                            const viewsCount = cat.key === 'views'
-                              ? tables?.filter((t) => t.type === 'view').length ?? 0
-                              : 0
-
-                            return (
-                              <div key={cat.key}>
-                                {/* 分类节点 */}
-                                <div
-                                  className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
-                                  onClick={() => handleCategoryClick(config, db, cat.key)}
-                                >
-                                  <cat.icon size={13} className={`flex-shrink-0 ${
-                                    cat.key === 'tables' ? 'text-blue-400' :
-                                    cat.key === 'views' ? 'text-purple-400' :
-                                    cat.key === 'functions' ? 'text-orange-400' :
-                                    'text-green-400'
-                                  }`} />
-                                  <span className="flex-1 truncate text-text-secondary">{cat.label}</span>
-                                  {cat.key === 'tables' && tablesOnly > 0 && (
-                                    <span className="text-[9px] text-text-muted">{tablesOnly}</span>
-                                  )}
-                                  {cat.key === 'views' && viewsCount > 0 && (
-                                    <span className="text-[9px] text-text-muted">{viewsCount}</span>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )
-      })}
-      </div>
+      {/* 有分组的连接 */}
+      {groupNames.map((groupName) => (
+        <GroupFolder
+          key={groupName}
+          name={groupName}
+          connections={groupedConnections[groupName]}
+          renderConnection={renderConnection}
+        />
+      ))}
+      {/* 未分组连接 */}
+      {ungrouped.map(renderConnection)}
+    </div>
 
       {/* 新建/删除数据库弹窗 */}
       {dbModal && (
@@ -501,5 +609,46 @@ export default function ConnectionTree() {
         </div>
       )}
     </>
+  )
+}
+
+// ==================== 分组文件夹组件 ====================
+
+function GroupFolder({
+  name,
+  connections,
+  renderConnection
+}: {
+  name: string
+  connections: ConnectionConfig[]
+  renderConnection: (config: ConnectionConfig) => React.ReactNode
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-bg-hover"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        {expanded ? (
+          <ChevronDown size={13} className="text-text-muted" />
+        ) : (
+          <ChevronRight size={13} className="text-text-muted" />
+        )}
+        {expanded ? (
+          <FolderOpen size={14} className="text-yellow-400 flex-shrink-0" />
+        ) : (
+          <Folder size={14} className="text-yellow-400 flex-shrink-0" />
+        )}
+        <span className="flex-1 truncate text-text-secondary font-medium text-xs">{name}</span>
+        <span className="text-[9px] text-text-muted">{connections.length}</span>
+      </div>
+      {expanded && (
+        <div className="ml-3 border-l border-border-light/40 pl-1">
+          {connections.map(renderConnection)}
+        </div>
+      )}
+    </div>
   )
 }

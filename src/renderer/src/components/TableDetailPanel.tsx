@@ -15,8 +15,11 @@ import RoutineDetailPanel from './RoutineDetailPanel'
 import EventDetailPanel from './EventDetailPanel'
 import EditableObjectEditor from './EditableObjectEditor'
 import QueryPanel from './QueryPanel'
+import ERDiagramView from './ERDiagramView'
+import TableCompareView from './TableCompareView'
+import SnippetPanel from './SnippetPanel'
 
-type DetailTab = 'info' | 'data' | 'structure' | 'ddl'
+type DetailTab = 'info' | 'data' | 'structure' | 'ddl' | 'er'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -32,7 +35,7 @@ function formatNumber(n: number | null | undefined): string {
 
 export default function TableDetailPanel() {
   const connections = useConnectionStore((s) => s.connections)
-  const { selectedConnectionId, selectedDatabase, selectedTable, isCreating, isEditing, selectedCategory, routines, preferredDetailTab } = useBrowserStore()
+  const { selectedConnectionId, selectedDatabase, selectedTable, isCreating, isEditing, selectedCategory, routines, preferredDetailTab, compareSource, setCompareSource } = useBrowserStore()
   const [activeTab, setActiveTab] = useState<DetailTab>('info')
 
   // 单击/双击表时，根据 store 的 preferredDetailTab 切换标签页
@@ -172,6 +175,41 @@ export default function TableDetailPanel() {
   // 查询分类 — 直接显示查询面板（不依赖 selectedTable）
   if (selectedCategory === 'query' && selectedConnectionId && selectedDatabase) {
     return <QueryPanel />
+  }
+
+  // ER 图分类
+  if (selectedCategory === 'er' && selectedConnectionId && selectedDatabase) {
+    return <ERDiagramView />
+  }
+
+  // SQL 片段分类
+  if (selectedCategory === 'snippets' && selectedConnectionId && selectedDatabase) {
+    return <SnippetPanel />
+  }
+
+  // 表结构对比模式
+  if (compareSource && config && selectedConnectionId && selectedDatabase) {
+    return (
+      <div className="flex flex-col h-full bg-bg-primary">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-light bg-bg-secondary flex-shrink-0">
+          <span className="text-xs font-medium text-text-primary">表结构对比：{compareSource.table}</span>
+          <button
+            onClick={() => setCompareSource(null)}
+            className="px-2 py-0.5 text-xs rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+          >
+            关闭
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <TableCompareView
+            leftConfig={config}
+            leftDatabase={selectedDatabase}
+            leftTable={compareSource.table}
+            onClose={() => setCompareSource(null)}
+          />
+        </div>
+      </div>
+    )
   }
 
   // 非表分类 — 路由到各自的详情面板
