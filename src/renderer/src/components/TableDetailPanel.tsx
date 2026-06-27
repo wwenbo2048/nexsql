@@ -1,25 +1,11 @@
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Table as TableIcon, Database as DatabaseIcon, Loader2, AlertCircle, Copy, Check, Info, Hash, HardDrive, Cog, Clock, Calendar, Type as TypeIcon, Layers, Key, MessageSquare, Zap } from 'lucide-react'
-import { useBrowserStore, type DetailTab as StoreDetailTab } from '@stores/browser'
+import { useBrowserStore } from '@stores/browser'
 import { useConnectionStore } from '@stores/connection'
-import type { Tab, TableDetails, TriggerInfo } from '@shared/types'
-import DataTable from './DataTable'
-import StructureEditor from './StructureEditor'
+import type { TableDetails, TriggerInfo } from '@shared/types'
 import SqlHighlight from './SqlHighlight'
-import NewTableDesigner from './NewTableDesigner'
-import NewViewDesigner from './NewViewDesigner'
-import NewRoutineDesigner from './NewRoutineDesigner'
-import NewEventDesigner from './NewEventDesigner'
-import ViewDetailPanel from './ViewDetailPanel'
-import RoutineDetailPanel from './RoutineDetailPanel'
-import EventDetailPanel from './EventDetailPanel'
-import EditableObjectEditor from './EditableObjectEditor'
-import QueryPanel from './QueryPanel'
-import ERDiagramView from './ERDiagramView'
-import TableCompareView from './TableCompareView'
-import SnippetPanel from './SnippetPanel'
 
-type DetailTab = 'info' | 'data' | 'structure' | 'ddl' | 'er'
+type DetailTab = 'info' | 'ddl'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -35,22 +21,8 @@ function formatNumber(n: number | null | undefined): string {
 
 export default function TableDetailPanel() {
   const connections = useConnectionStore((s) => s.connections)
-  const { selectedConnectionId, selectedDatabase, selectedTable, isCreating, isEditing, selectedCategory, routines, preferredDetailTab, compareSource, setCompareSource } = useBrowserStore()
+  const { selectedConnectionId, selectedDatabase, selectedTable, selectedCategory, routines } = useBrowserStore()
   const [activeTab, setActiveTab] = useState<DetailTab>('info')
-
-  // 单击/双击表时，根据 store 的 preferredDetailTab 切换标签页
-  useEffect(() => {
-    if (preferredDetailTab) {
-      setActiveTab(preferredDetailTab)
-    }
-  }, [preferredDetailTab, selectedTable])
-
-  // 表编辑模式 — 自动切换到结构标签页
-  useEffect(() => {
-    if (isEditing && selectedCategory === 'tables') {
-      setActiveTab('structure')
-    }
-  }, [isEditing, selectedCategory])
 
   const config = connections.find((c) => c.id === selectedConnectionId)
 
@@ -84,18 +56,44 @@ export default function TableDetailPanel() {
     if (!config || !selectedDatabase || !selectedTable) return
     setDdlLoading(true)
     try {
-      const [ddlRes, trgRes] = await Promise.all([
-        window.api.db.getTableDDL(config, selectedDatabase, selectedTable),
-        window.api.db.getTableTriggers(config, selectedDatabase, selectedTable)
-      ])
-      if (ddlRes.success) setDdl(ddlRes.data ?? '')
-      if (trgRes.success) setTriggers(trgRes.data ?? [])
+      let ddlSql = ''
+      if (selectedCategory === 'tables') {
+        const [ddlRes, trgRes] = await Promise.all([
+          window.api.db.getTableDDL(config, selectedDatabase, selectedTable),
+          window.api.db.getTableTriggers(config, selectedDatabase, selectedTable)
+        ])
+        if (ddlRes.success) ddlSql = ddlRes.data ?? ''
+        if (trgRes.success) setTriggers(trgRes.data ?? [])
+      } else if (selectedCategory === 'views') {
+        const res = await window.api.db.query(config, `SHOW CREATE VIEW \`${selectedTable}\``, selectedDatabase)
+        if (res.success && res.data?.rows?.[0]) {
+          const row = res.data.rows[0] as Record<string, unknown>
+          ddlSql = String(row['Create View'] ?? row['Create View'] ?? '')
+        }
+      } else if (selectedCategory === 'functions') {
+        const routine = routines.find((r) => r.name === selectedTable)
+        const isFunc = routine?.type === 'FUNCTION'
+        const res = await window.api.db.query(config, isFunc ? `SHOW CREATE FUNCTION \`${selectedTable}\`` : `SHOW CREATE PROCEDURE \`${selectedTable}\``, selectedDatabase)
+        if (res.success && res.data?.rows?.[0]) {
+          const row = res.data.rows[0] as Record<string, unknown>
+          const key = Object.keys(row).find((k) => k.toLowerCase().includes('create'))
+          ddlSql = key ? String(row[key]) : ''
+        }
+      } else if (selectedCategory === 'events') {
+        const res = await window.api.db.query(config, `SHOW CREATE EVENT \`${selectedTable}\``, selectedDatabase)
+        if (res.success && res.data?.rows?.[0]) {
+          const row = res.data.rows[0] as Record<string, unknown>
+          const key = Object.keys(row).find((k) => k.toLowerCase().includes('create'))
+          ddlSql = key ? String(row[key]) : ''
+        }
+      }
+      setDdl(ddlSql)
     } catch (err) {
       setError((err as Error).message)
     } finally {
       setDdlLoading(false)
     }
-  }, [config, selectedDatabase, selectedTable])
+  }, [config, selectedDatabase, selectedTable, selectedCategory, routines])
 
   // Load details when table changes or info tab selected
   useEffect(() => {
@@ -111,119 +109,24 @@ export default function TableDetailPanel() {
     }
   }, [selectedTable, activeTab, loadDDL])
 
+  // Reset to info tab when table changes
+  useEffect(() => {
+    setActiveTab('info')
+  }, [selectedTable])
+
   const handleCopyDDL = useCallback(() => {
     navigator.clipboard.writeText(ddl)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }, [ddl])
 
-  // 构造虚拟 Tab 传给 DataTable
-  const dataTableTab: Tab | null =
-    selectedTable && config && selectedDatabase
-      ? {
-          id: `detail-data-${selectedConnectionId}-${selectedDatabase}-${selectedTable}`,
-          type: 'table-data',
-          title: selectedTable,
-          connectionId: selectedConnectionId!,
-          database: selectedDatabase,
-          table: selectedTable
-        }
-      : null
-
-  // 新建设计器模式 — 根据分类路由
-  if (isCreating && selectedConnectionId && selectedDatabase) {
-    if (selectedCategory === 'tables') return <NewTableDesigner />
-    if (selectedCategory === 'views') return <NewViewDesigner />
-    if (selectedCategory === 'functions') return <NewRoutineDesigner />
-    if (selectedCategory === 'events') return <NewEventDesigner />
-  }
-
-  // 编辑模式 — 非表分类显示可编辑 DDL 编辑器
-  if (isEditing && selectedTable && selectedConnectionId && selectedDatabase) {
-    if (selectedCategory === 'views') {
-      return (
-        <EditableObjectEditor
-          type="view"
-          loadSql={`SHOW CREATE VIEW \`${selectedTable}\``}
-          dropSql={`DROP VIEW IF EXISTS \`${selectedTable}\``}
-        />
-      )
-    }
-    if (selectedCategory === 'functions') {
-      // 判断是 FUNCTION 还是 PROCEDURE
-      const routine = routines.find((r) => r.name === selectedTable)
-      const isFunc = routine?.type === 'FUNCTION'
-      return (
-        <EditableObjectEditor
-          type={isFunc ? 'function' : 'procedure'}
-          loadSql={isFunc ? `SHOW CREATE FUNCTION \`${selectedTable}\`` : `SHOW CREATE PROCEDURE \`${selectedTable}\``}
-          dropSql={isFunc ? `DROP FUNCTION IF EXISTS \`${selectedTable}\`` : `DROP PROCEDURE IF EXISTS \`${selectedTable}\``}
-        />
-      )
-    }
-    if (selectedCategory === 'events') {
-      return (
-        <EditableObjectEditor
-          type="event"
-          loadSql={`SHOW CREATE EVENT \`${selectedTable}\``}
-          dropSql={`DROP EVENT IF EXISTS \`${selectedTable}\``}
-        />
-      )
-    }
-  }
-
-  // 查询分类 — 直接显示查询面板（不依赖 selectedTable）
-  if (selectedCategory === 'query' && selectedConnectionId && selectedDatabase) {
-    return <QueryPanel />
-  }
-
-  // ER 图分类
-  if (selectedCategory === 'er' && selectedConnectionId && selectedDatabase) {
-    return <ERDiagramView />
-  }
-
-  // SQL 片段分类
-  if (selectedCategory === 'snippets' && selectedConnectionId && selectedDatabase) {
-    return <SnippetPanel />
-  }
-
-  // 表结构对比模式
-  if (compareSource && config && selectedConnectionId && selectedDatabase) {
-    return (
-      <div className="flex flex-col h-full bg-bg-primary">
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-light bg-bg-secondary flex-shrink-0">
-          <span className="text-xs font-medium text-text-primary">表结构对比：{compareSource.table}</span>
-          <button
-            onClick={() => setCompareSource(null)}
-            className="px-2 py-0.5 text-xs rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
-          >
-            关闭
-          </button>
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <TableCompareView
-            leftConfig={config}
-            leftDatabase={selectedDatabase}
-            leftTable={compareSource.table}
-            onClose={() => setCompareSource(null)}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  // 非表分类 — 路由到各自的详情面板
-  if (selectedTable && selectedCategory === 'views') return <ViewDetailPanel />
-  if (selectedTable && selectedCategory === 'functions') return <RoutineDetailPanel />
-  if (selectedTable && selectedCategory === 'events') return <EventDetailPanel />
-
   // 空状态
   if (!selectedConnectionId || !selectedDatabase) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-muted bg-bg-primary">
         <DatabaseIcon size={48} className="opacity-20 mb-3" />
-        <p className="text-sm">选择一个数据库和表</p>
-        <p className="text-xs mt-1">在左侧展开连接 → 选择数据库 → 点击表</p>
+        <p className="text-sm">选择一个数据库</p>
+        <p className="text-xs mt-1">在左侧展开连接 → 选择数据库</p>
       </div>
     )
   }
@@ -232,20 +135,18 @@ export default function TableDetailPanel() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-muted bg-bg-primary">
         <TableIcon size={48} className="opacity-20 mb-3" />
-        <p className="text-sm">未选择表</p>
-        <p className="text-xs mt-1">在中间面板点击一张表查看详情</p>
+        <p className="text-sm">未选择对象</p>
+        <p className="text-xs mt-1">单击表查看详情</p>
       </div>
     )
   }
 
   return (
     <div className="flex flex-col h-full bg-bg-primary">
-      {/* Tab 切换 */}
+      {/* Tab 切换 — 只有常规和 DDL */}
       <div className="flex items-center border-b border-border-light bg-bg-secondary flex-shrink-0">
         {([
           { key: 'info' as const, label: '常规' },
-          { key: 'data' as const, label: '数据' },
-          { key: 'structure' as const, label: '结构' },
           { key: 'ddl' as const, label: 'DDL' }
         ]).map((t) => (
           <button
@@ -271,13 +172,13 @@ export default function TableDetailPanel() {
           </div>
         )}
 
-        {/* 常规标签页 — 只读基本信息 */}
+        {/* 常规标签页 — 基本信息 */}
         {activeTab === 'info' && (
           <div className="h-full overflow-auto">
             {detailsLoading ? (
               <div className="flex items-center justify-center h-full text-text-secondary text-sm gap-2">
                 <Loader2 size={16} className="animate-spin text-accent" />
-                加载表信息...
+                加载信息...
               </div>
             ) : details ? (
               <div className="p-4">
@@ -288,7 +189,7 @@ export default function TableDetailPanel() {
                 </div>
 
                 {/* 信息网格 */}
-                <div className="grid grid-cols-2 gap-x-6 gap-y-0">
+                <div className="grid grid-cols-1 gap-x-6 gap-y-0">
                   <InfoRow icon={<Hash size={13} />} label="行数" value={formatNumber(details.rows)} />
                   <InfoRow icon={<HardDrive size={13} />} label="数据长度" value={formatBytes(details.dataSize)} />
                   <InfoRow icon={<HardDrive size={13} />} label="索引长度" value={formatBytes(details.indexLength)} />
@@ -300,7 +201,7 @@ export default function TableDetailPanel() {
                   <InfoRow icon={<Key size={13} />} label="自动递增" value={details.autoIncrement ? formatNumber(details.autoIncrement) : '-'} />
                 </div>
 
-                {/* 注释 — 单独一行 */}
+                {/* 注释 */}
                 <div className="mt-4 pt-3 border-t border-border-light">
                   <div className="flex items-start gap-2">
                     <MessageSquare size={13} className="text-text-muted mt-0.5 flex-shrink-0" />
@@ -312,28 +213,18 @@ export default function TableDetailPanel() {
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-text-muted text-sm">无数据</div>
+              <div className="flex items-center justify-center h-full text-text-muted text-sm">
+                {selectedCategory !== 'tables' ? '切换到 DDL 标签查看定义' : '无数据'}
+              </div>
             )}
           </div>
-        )}
-
-        {/* 数据标签页 */}
-        {activeTab === 'data' && dataTableTab && <DataTable tab={dataTableTab} />}
-
-        {/* 结构标签页 — 可编辑 */}
-        {activeTab === 'structure' && selectedConnectionId && selectedDatabase && selectedTable && (
-          <StructureEditor
-            connectionId={selectedConnectionId}
-            database={selectedDatabase}
-            table={selectedTable}
-          />
         )}
 
         {/* DDL 标签页 */}
         {activeTab === 'ddl' && (
           <div className="h-full flex flex-col">
             <div className="flex items-center justify-between px-3 py-1 border-b border-border-light bg-bg-secondary flex-shrink-0">
-              <span className="text-xs text-text-muted">SHOW CREATE TABLE</span>
+              <span className="text-xs text-text-muted">CREATE 语句</span>
               <button
                 onClick={handleCopyDDL}
                 className="flex items-center gap-1 px-2 py-0.5 text-xs hover:bg-bg-hover rounded text-text-secondary hover:text-text-primary transition-colors"
@@ -349,9 +240,8 @@ export default function TableDetailPanel() {
                   <Loader2 size={16} className="animate-spin text-accent" />
                   加载 DDL...
                 </div>
-              ) : (
+              ) : ddl ? (
                 <>
-                  {/* 表 DDL */}
                   <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed"><SqlHighlight sql={ddl} /></pre>
 
                   {/* 触发器 DDL */}
@@ -373,11 +263,12 @@ export default function TableDetailPanel() {
                     </div>
                   )}
                 </>
+              ) : (
+                <div className="flex items-center justify-center h-full text-text-muted text-sm">无 DDL 数据</div>
               )}
             </div>
           </div>
         )}
-
       </div>
     </div>
   )
@@ -385,7 +276,7 @@ export default function TableDetailPanel() {
 
 // ==================== 信息行子组件 ====================
 
-function InfoRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="flex items-center gap-2 py-2 border-b border-border-light/30">
       <span className="text-text-muted flex-shrink-0">{icon}</span>

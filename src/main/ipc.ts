@@ -328,34 +328,63 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
 
   // ==================== 数据库备份/恢复 ====================
 
+  // 取消标记
+  const cancelFlags = new Set<string>()
+
+  ipcMain.handle('db:cancelOperation', (_event, operationId: string) => {
+    cancelFlags.add(operationId)
+  })
+
   ipcMain.handle(
     'db:dumpDatabase',
-    async (_event, config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }) => {
+    async (event, config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string) => {
       try {
-        const sql = await db.dumpDatabase(config, database, options)
+        const sql = await db.dumpDatabase(config, database, options,
+          (p) => {
+            if (cancelFlags.has(operationId)) return
+            event.sender.send('db:backupProgress', { operationId, ...p })
+          },
+          () => cancelFlags.has(operationId)
+        )
+        if (cancelFlags.has(operationId)) {
+          cancelFlags.delete(operationId)
+          return { success: false, error: '已取消' }
+        }
         return { success: true, data: sql }
       } catch (err) {
+        if ((err as Error).message === '已取消') {
+          return { success: false, error: '已取消' }
+        }
         logError('db:dumpDatabase', err)
         return { success: false, error: getFullErrorMessage(err) }
+      } finally {
+        cancelFlags.delete(operationId)
       }
     }
   )
 
   ipcMain.handle(
     'db:restoreDatabase',
-    async (_event, config: ConnectionConfig, database: string, sql: string) => {
+    async (event, config: ConnectionConfig, database: string, sql: string, operationId: string) => {
       try {
         const pool = await db.getPool(config)
         const conn = await pool.getConnection()
         try {
           await conn.changeUser({ database })
-          // 按 ; 分割并逐条执行
           const statements = sql.split(';').map((s) => s.trim()).filter((s) => s && !s.startsWith('--'))
           let executed = 0
-          for (const stmt of statements) {
+          for (let i = 0; i < statements.length; i++) {
+            if (cancelFlags.has(operationId)) {
+              cancelFlags.delete(operationId)
+              return { success: false, error: '已取消' }
+            }
+            const stmt = statements[i]
             if (stmt.length > 0) {
               await conn.query(stmt)
               executed++
+            }
+            if ((i + 1) % 10 === 0 || i === statements.length - 1) {
+              event.sender.send('db:restoreProgress', { operationId, current: i + 1, total: statements.length })
             }
           }
           return { success: true, data: { executed } }
@@ -365,11 +394,55 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       } catch (err) {
         logError('db:restoreDatabase', err)
         return { success: false, error: getFullErrorMessage(err) }
+      } finally {
+        cancelFlags.delete(operationId)
       }
     }
   )
 
   // ==================== 文件保存（导出） ====================
+
+  // 仅选择保存路径（不写入内容）
+  ipcMain.handle(
+    'file:savePathDialog',
+    async (_event, defaultName: string, filterExt?: string) => {
+      try {
+        const filters: Electron.FileFilter[] = []
+        if (filterExt === 'csv') {
+          filters.push({ name: 'CSV 文件', extensions: ['csv'] })
+        } else if (filterExt === 'json') {
+          filters.push({ name: 'JSON 文件', extensions: ['json'] })
+        } else if (filterExt === 'sql') {
+          filters.push({ name: 'SQL 文件', extensions: ['sql'] })
+        } else {
+          filters.push({ name: 'SQL 文件', extensions: ['sql'] })
+        }
+        filters.push({ name: '所有文件', extensions: ['*'] })
+        const result = await dialog.showSaveDialog(_mainWindow, { defaultPath: defaultName, filters })
+        if (result.canceled || !result.filePath) {
+          return { success: true, data: { saved: false } }
+        }
+        return { success: true, data: { saved: true, path: result.filePath } }
+      } catch (err) {
+        logError('file:savePathDialog', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  // 写入内容到指定路径
+  ipcMain.handle(
+    'file:writeToFile',
+    async (_event, filePath: string, content: string) => {
+      try {
+        await writeFile(filePath, content, 'utf-8')
+        return { success: true, data: true }
+      } catch (err) {
+        logError('file:writeToFile', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
 
   ipcMain.handle(
     'file:saveDialog',

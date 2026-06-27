@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -48,11 +48,13 @@ export default function ConnectionTree() {
   const { toggleExpand, setStatus, deleteConnection } = useConnectionStore()
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
-  const openTab = useTabStore((s) => s.openTab)
 
   const [, forceUpdate] = useState({})
   // 新建/删除数据库弹窗
   const [dbModal, setDbModal] = useState<{ mode: 'create' | 'delete'; config: ConnectionConfig; dbName?: string; name: string; charset: string; collation: string } | null>(null)
+  // 备份/恢复进度弹窗
+  const [opProgress, setOpProgress] = useState<{ type: 'backup' | 'restore'; dbName: string; current: number; total: number; label: string; operationId: string } | null>(null)
+  const operationIdRef = useRef<string>('')
   const selectDatabase = useBrowserStore((s) => s.selectDatabase)
   const selectCategory = useBrowserStore((s) => s.selectCategory)
   const selectTable = useBrowserStore((s) => s.selectTable)
@@ -127,25 +129,25 @@ export default function ConnectionTree() {
     [selectDatabase, selectCategory]
   )
 
+  const openTableData = useTabStore((s) => s.openTableData)
+  const openTableDesign = useTabStore((s) => s.openTableDesign)
+  const openQueryTab = useTabStore((s) => s.openQuery)
+
   const handleTableDoubleClick = useCallback(
     (config: ConnectionConfig, database: string, table: TableInfo) => {
       selectDatabase(config.id, database)
       selectTable(table.name)
+      // 双击表 → 在中间区域开数据 Tab
+      openTableData(config.id, database, table.name)
     },
-    [selectDatabase, selectTable]
+    [selectDatabase, selectTable, openTableData]
   )
 
   const handleNewQuery = useCallback(
     (config: ConnectionConfig, database?: string) => {
-      openTab({
-        id: `query-${Date.now()}`,
-        type: 'query',
-        title: database ? `Query - ${database}` : 'Query',
-        connectionId: config.id,
-        database
-      })
+      openQueryTab(config.id, database)
     },
-    [openTab]
+    [openQueryTab]
   )
 
   // ==================== 新建数据库 ====================
@@ -207,26 +209,47 @@ export default function ConnectionTree() {
 
   const handleBackupDatabase = useCallback(
     async (config: ConnectionConfig, dbName: string) => {
-      if (!confirm(`确定备份数据库 "${dbName}" 吗？\n将导出所有表结构和数据。`)) return
+      // 先选择保存位置
+      const saveRes = await window.api.file.savePathDialog(
+        `${dbName}_backup_${new Date().toISOString().slice(0, 10)}.sql`,
+        'sql'
+      )
+      if (!saveRes.success || !saveRes.data?.saved || !saveRes.data.path) return
+
+      const savePath = saveRes.data.path
+      const opId = `backup_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      operationIdRef.current = opId
+      setOpProgress({ type: 'backup', dbName, current: 0, total: 100, label: '正在获取表列表...', operationId: opId })
+
+      const unsub = window.api.db.onBackupProgress((data) => {
+        if (data.operationId !== opId) return
+        setOpProgress({ type: 'backup', dbName, current: data.index, total: data.total, label: `正在备份表: ${data.current}`, operationId: opId })
+      })
+
       try {
         const res = await window.api.db.dumpDatabase(config, dbName, {
           tables: [],
           includeData: true,
           includeStructure: true
-        })
+        }, opId)
+        unsub()
         if (!res.success || !res.data) {
-          alert(`备份失败: ${res.error}`)
+          setOpProgress(null)
+          if (res.error !== '已取消') alert(`备份失败: ${res.error}`)
           return
         }
-        const saveRes = await window.api.file.saveDialog(
-          `${dbName}_backup_${new Date().toISOString().slice(0, 10)}.sql`,
-          res.data,
-          'sql'
-        )
-        if (saveRes.success && saveRes.data?.saved) {
-          alert(`数据库备份成功！\n保存至: ${saveRes.data.path}`)
+        setOpProgress((prev) => prev ? { ...prev, label: '写入文件...' } : null)
+        // 写入已选择的路径
+        const writeRes = await window.api.file.writeToFile(savePath, res.data)
+        setOpProgress(null)
+        if (writeRes.success) {
+          alert(`数据库备份成功！\n保存至: ${savePath}`)
+        } else {
+          alert(`备份文件写入失败: ${writeRes.error}`)
         }
       } catch (err) {
+        unsub()
+        setOpProgress(null)
         alert(`备份失败: ${(err as Error).message}`)
       }
     },
@@ -241,24 +264,44 @@ export default function ConnectionTree() {
       try {
         const openRes = await window.api.file.openDialog('sql')
         if (!openRes.success || openRes.data?.canceled || !openRes.data?.content) return
-        const res = await window.api.db.restoreDatabase(config, dbName, openRes.data.content)
+
+        const opId = `restore_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        operationIdRef.current = opId
+        setOpProgress({ type: 'restore', dbName, current: 0, total: 100, label: '正在执行 SQL...', operationId: opId })
+
+        const unsub = window.api.db.onRestoreProgress((data) => {
+          if (data.operationId !== opId) return
+          setOpProgress({ type: 'restore', dbName, current: data.current, total: data.total, label: `正在执行语句 ${data.current}/${data.total}`, operationId: opId })
+        })
+
+        const res = await window.api.db.restoreDatabase(config, dbName, openRes.data.content, opId)
+        unsub()
+        setOpProgress(null)
         if (res.success) {
           alert(`数据库恢复成功！执行了 ${res.data?.executed ?? 0} 条语句。`)
-          // 刷新数据库列表
           const dbRes = await window.api.db.getDatabases(config)
           if (dbRes.success && dbRes.data) {
             nodeCache.set(config.id, { ...nodeCache.get(config.id), databases: dbRes.data })
             forceUpdate({})
           }
         } else {
+          if (res.error === '已取消') return
           alert(`恢复失败: ${res.error}`)
         }
       } catch (err) {
+        setOpProgress(null)
         alert(`恢复失败: ${(err as Error).message}`)
       }
     },
     []
   )
+
+  // 取消操作
+  const handleCancelOperation = useCallback(() => {
+    if (operationIdRef.current) {
+      window.api.db.cancelOperation(operationIdRef.current)
+    }
+  }, [])
 
   // 监听菜单栏新建数据库事件
   useEffect(() => {
@@ -318,15 +361,7 @@ export default function ConnectionTree() {
         },
         {
           label: '设计表',
-          onClick: () =>
-            openTab({
-              id: `${config.id}-${database}-${table.name}-design-${Date.now()}`,
-              type: 'table-design',
-              title: `设计 ${table.name}`,
-              connectionId: config.id,
-              database,
-              table: table.name
-            })
+          onClick: () => openTableDesign(config.id, database, table.name)
         },
         { label: '', separator: true },
         {
@@ -336,7 +371,7 @@ export default function ConnectionTree() {
       ]
       setContextMenu({ x: e.clientX, y: e.clientY, items })
     },
-    [handleTableDoubleClick, openTab, setContextMenu]
+    [handleTableDoubleClick, openTableDesign, setContextMenu]
   )
 
   // 按分组归类连接（必须在条件 return 之前调用，遵守 Hooks 规则）
@@ -603,6 +638,39 @@ export default function ConnectionTree() {
                 className={`px-3 py-1.5 rounded text-xs text-white transition-colors ${dbModal!.mode === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-accent hover:bg-accent/80'}`}
               >
                 {dbModal!.mode === 'create' ? '创建' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 备份/恢复进度弹窗 */}
+      {opProgress && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
+          <div className="bg-bg-tertiary border border-border rounded-lg shadow-2xl p-5 w-96">
+            <div className="flex items-center gap-2 mb-3">
+              <Loader2 size={16} className="animate-spin text-accent" />
+              <span className="text-sm font-medium text-text-primary">
+                {opProgress.type === 'backup' ? '数据库备份' : '数据库恢复'}
+              </span>
+              <span className="text-xs text-text-muted ml-auto">{opProgress.dbName}</span>
+            </div>
+            <div className="text-xs text-text-secondary mb-2 truncate">{opProgress.label}</div>
+            <div className="h-2 bg-bg-primary rounded-full overflow-hidden mb-3">
+              <div
+                className="h-full bg-accent rounded-full transition-all duration-200"
+                style={{ width: `${opProgress.total > 0 ? Math.min(100, (opProgress.current / opProgress.total) * 100) : 0}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-text-muted">
+                {opProgress.total > 0 ? `${opProgress.current} / ${opProgress.total}` : ''}
+              </span>
+              <button
+                onClick={handleCancelOperation}
+                className="px-3 py-1.5 rounded text-xs hover:bg-bg-hover text-red-400 hover:text-red-300 transition-colors"
+              >
+                取消
               </button>
             </div>
           </div>

@@ -24,6 +24,7 @@ import {
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
 import { useBrowserStore } from '@stores/browser'
+import { useTabStore } from '@stores/tab'
 
 interface MenuItem {
   label: string
@@ -48,8 +49,22 @@ export default function MenuBar() {
   const setContextMenu = useUiStore((s) => s.setContextMenu)
   const { selectedConnectionId, selectedDatabase, selectedTable, selectedCategory, refreshList, startCreating, selectCategory } = useBrowserStore()
   const { connections, statuses } = useConnectionStore()
+  const activeTab = useTabStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
   const config = connections.find((c) => c.id === selectedConnectionId)
   const isConnected = config ? statuses[config.id] === 'connected' : false
+
+  // 指示器显示：活跃 Tab 的数据库/表，或浏览器面板的选中状态
+  const displayDb = activeTab?.type !== 'browser' && activeTab?.database
+    ? activeTab.database
+    : selectedDatabase
+  const displayTable = activeTab?.type !== 'browser' && activeTab?.table
+    ? activeTab.table
+    : selectedTable
+  const displayConnId = activeTab?.type !== 'browser' && activeTab?.connectionId
+    ? activeTab.connectionId
+    : selectedConnectionId
+  const displayConfig = connections.find((c) => c.id === displayConnId)
+  const displayConnected = displayConfig ? statuses[displayConfig.id] === 'connected' : false
 
   // 关闭菜单（点击外部）
   useEffect(() => {
@@ -145,7 +160,7 @@ export default function MenuBar() {
       onClick: () => { setShowSidebar((v) => !v); window.dispatchEvent(new CustomEvent('nexsql-toggle-sidebar')); setOpenMenu(null) }
     },
     {
-      label: showMiddle ? '隐藏中栏' : '显示中栏',
+      label: showMiddle ? '隐藏信息面板' : '显示信息面板',
       icon: <Columns3 size={13} />,
       shortcut: '⌘2',
       onClick: () => { setShowMiddle((v) => !v); window.dispatchEvent(new CustomEvent('nexsql-toggle-middle')); setOpenMenu(null) }
@@ -315,16 +330,16 @@ export default function MenuBar() {
       </div>
 
       {/* 当前数据库状态指示器 */}
-      {selectedConnectionId && selectedDatabase && (
+      {displayConnId && displayDb && (
         <div className="flex items-center gap-1.5 ml-3 pl-3 border-l border-border-light text-[10px] text-text-muted select-none">
-          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-text-muted'}`} />
-          <span className="text-text-secondary">{config?.name}</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${displayConnected ? 'bg-green-400' : 'bg-text-muted'}`} />
+          <span className="text-text-secondary">{displayConfig?.name}</span>
           <span>›</span>
-          <span className="text-text-primary">{selectedDatabase}</span>
-          {selectedTable && (
+          <span className="text-text-primary">{displayDb}</span>
+          {displayTable && (
             <>
               <span>›</span>
-              <span className="text-accent">{selectedTable}</span>
+              <span className="text-accent">{displayTable}</span>
             </>
           )}
         </div>

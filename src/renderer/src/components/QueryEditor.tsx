@@ -10,11 +10,13 @@ import {
   Download,
   Trash2,
   History,
-  Activity
+  Activity,
+  Save
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
 import { useHistoryStore } from '@stores/history'
+import { useBrowserStore } from '@stores/browser'
 import type { Tab, QueryResult } from '@shared/types'
 import QueryHistoryPanel from './QueryHistoryPanel'
 import ExplainPlanView from './ExplainPlanView'
@@ -25,7 +27,7 @@ interface Props {
 
 export default function QueryEditor({ tab }: Props) {
   const [sql, setSql] = useState<string>(
-    tab.database ? `-- 在 ${tab.database} 上执行查询\nSELECT * FROM \`\`\nLIMIT 100;` : '-- 输入 SQL 查询\n'
+    tab.sql ?? (tab.database ? `-- 在 ${tab.database} 上执行查询\nSELECT * FROM \`\`\nLIMIT 100;` : '-- 输入 SQL 查询\n')
   )
   const [result, setResult] = useState<QueryResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -35,11 +37,17 @@ export default function QueryEditor({ tab }: Props) {
   const [showExplain, setShowExplain] = useState(false)
   const [explainData, setExplainData] = useState<{ rows: Record<string, unknown>[]; columns: { name: string; type: string; nullable: boolean }[]; treeText?: string } | null>(null)
   const [explainLoading, setExplainLoading] = useState(false)
-  const editorRef = useRef<Parameters<Parameters<typeof Editor>['0']['onMount']>[0] | null>(null)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const editorRef = useRef<any>(null)
   const connections = useConnectionStore((s) => s.connections)
   const resultPanelHeight = useUiStore((s) => s.resultPanelHeight)
   const setResultPanelHeight = useUiStore((s) => s.setResultPanelHeight)
   const addHistoryEntry = useHistoryStore((s) => s.addEntry)
+  const { saveQuery, updateQuery } = useBrowserStore()
+
+  const isSavedQuery = !!tab.savedQueryId
+  const [saveFlash, setSaveFlash] = useState(false)
 
   const config = connections.find((c) => c.id === tab.connectionId)
 
@@ -125,15 +133,45 @@ export default function QueryEditor({ tab }: Props) {
     }
   }, [config, sql, tab.database])
 
-  const handleEditorMount = useCallback((editor: Parameters<Parameters<typeof Editor>['0']['onMount']>[0]) => {
+  // 保存查询：已保存的直接更新，未保存的弹对话框
+  const handleSave = useCallback(() => {
+    if (!sql.trim()) return
+    if (isSavedQuery) {
+      updateQuery(tab.savedQueryId!, sql)
+      setSaveFlash(true)
+      setTimeout(() => setSaveFlash(false), 1200)
+    } else {
+      setSaveName('')
+      setShowSaveDialog(true)
+    }
+  }, [sql, isSavedQuery, tab.savedQueryId, updateQuery])
+
+  // Ctrl+S 快捷键
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        handleSave()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handleSave])
+
+  // Monaco 编辑器内也拦截 Ctrl+S
+  const handleEditorMount = useCallback((editor: any) => {
     editorRef.current = editor
-    // Ctrl+Enter / Cmd+Enter 执行查询
     editor.addCommand(
-      // @ts-ignore - Monaco monaco.KeyMod.CtrlCmd
-      2048 | 3, // KeyMod.CtrlCmd | KeyCode.Enter
+      // @ts-ignore
+      2048 | 3, // Ctrl+Enter
       () => handleExecute()
     )
-  }, [handleExecute])
+    editor.addCommand(
+      // @ts-ignore
+      2048 | 49, // Ctrl+S (KeyCode.KeyS = 49)
+      () => handleSave()
+    )
+  }, [handleExecute, handleSave])
 
   const handleExport = useCallback(() => {
     if (!result || result.rows.length === 0) return
@@ -229,6 +267,17 @@ export default function QueryEditor({ tab }: Props) {
           历史
         </button>
         <button
+          onClick={handleSave}
+          disabled={!sql.trim()}
+          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+            saveFlash ? 'text-green-400' : 'text-text-secondary hover:text-text-primary'
+          }`}
+          title={isSavedQuery ? '保存修改 (Ctrl+S)' : '另存为新查询'}
+        >
+          <Save size={14} />
+          {saveFlash ? '已保存' : isSavedQuery ? '保存' : '另存为'}
+        </button>
+        <button
           onClick={handleExplain}
           disabled={explainLoading || !config}
           className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${showExplain ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:text-text-primary'} disabled:opacity-50`}
@@ -244,6 +293,44 @@ export default function QueryEditor({ tab }: Props) {
           </div>
         )}
       </div>
+
+      {/* 保存查询对话框 */}
+      {showSaveDialog && (
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border-light bg-bg-tertiary/50">
+          <input
+            type="text"
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && saveName.trim()) {
+                saveQuery(saveName.trim(), sql)
+                setShowSaveDialog(false)
+              }
+              if (e.key === 'Escape') setShowSaveDialog(false)
+            }}
+            placeholder="查询名称..."
+            autoFocus
+            className="flex-1 px-2 py-1 bg-bg-primary border border-border-light rounded text-xs text-text-primary focus:outline-none focus:border-accent transition-colors"
+          />
+          <button
+            onClick={() => {
+              if (saveName.trim()) {
+                saveQuery(saveName.trim(), sql)
+                setShowSaveDialog(false)
+              }
+            }}
+            className="px-2 py-1 rounded text-xs bg-accent text-white hover:bg-accent/80 transition-colors"
+          >
+            确定
+          </button>
+          <button
+            onClick={() => setShowSaveDialog(false)}
+            className="px-2 py-1 rounded text-xs hover:bg-bg-hover text-text-secondary transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      )}
 
       {/* 编辑器 */}
       <div className="flex-1 overflow-hidden" style={{ minHeight: 100 }}>

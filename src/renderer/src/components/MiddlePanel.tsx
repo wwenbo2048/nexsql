@@ -24,8 +24,15 @@ import { useBrowserStore, type DbCategory } from '@stores/browser'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useSnippetStore } from '@stores/snippet'
-import { setCompletionContext, getCompletionContext } from '@renderer/sql-completion'
+import { useTabStore } from '@stores/tab'
+import { setCompletionContext, getCompletionContext, setLoadColumnsFn } from '@renderer/sql-completion'
 import type { TableInfo, ViewInfo, RoutineInfo, EventInfo } from '@shared/types'
+import NewTableDesigner from './NewTableDesigner'
+import NewViewDesigner from './NewViewDesigner'
+import NewRoutineDesigner from './NewRoutineDesigner'
+import NewEventDesigner from './NewEventDesigner'
+import EditableObjectEditor from './EditableObjectEditor'
+import TableCompareView from './TableCompareView'
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return '-'
@@ -58,15 +65,16 @@ export default function MiddlePanel() {
     selectedConnectionId, selectedDatabase, selectedTable, selectedCategory,
     selectTable, selectCategory,
     startCreating, startEditing,
+    isCreating, isEditing,
     tables, views, routines, events,
     setTables, setViews, setRoutines, setEvents,
     listLoading, setListLoading,
     listVersion, refreshList,
-    setCompareSource
+    compareSource, setCompareSource,
+    search, setSearch
   } = useBrowserStore()
 
   const [error, setError] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
   const [renameState, setRenameState] = useState<{ oldName: string; newName: string } | null>(null)
 
   const config = connections.find((c) => c.id === selectedConnectionId)
@@ -107,25 +115,74 @@ export default function MiddlePanel() {
     }
   }, [config, selectedDatabase, selectedCategory, listVersion, loadData])
 
-  // 更新 SQL 补全上下文（表名 + 字段名）
+  // 更新 SQL 补全上下文（表名 + 字段名）并批量加载所有表的字段
   useEffect(() => {
     if (tables.length > 0) {
-      const ctx = getCompletionContext()
+      const tableNames = tables.map((t) => t.name)
       setCompletionContext({
-        tables: tables.map((t) => t.name),
-        columns: ctx.columns,
+        tables: tableNames,
+        columns: {},
         database: selectedDatabase ?? undefined
       })
-    }
-  }, [tables, selectedDatabase])
 
-  // 选中表时加载字段名用于补全
+      // 批量加载所有表的字段（后台异步）
+      if (config && selectedDatabase) {
+        const loadAllColumns = async () => {
+          const ctx = getCompletionContext()
+          const allColumns: Record<string, string[]> = { ...ctx.columns }
+          await Promise.all(
+            tableNames.map(async (tableName) => {
+              if (allColumns[tableName] && allColumns[tableName].length > 0) return
+              try {
+                const res = await window.api.db.getTableColumns(config, selectedDatabase!, tableName)
+                if (res.success && res.data) {
+                  allColumns[tableName] = res.data!.map((c) => c.name)
+                }
+              } catch {
+                // ignore individual table load failures
+              }
+            })
+          )
+          setCompletionContext({
+            tables: tableNames,
+            columns: allColumns,
+            database: selectedDatabase ?? undefined
+          })
+        }
+        loadAllColumns()
+      }
+    }
+  }, [tables, selectedDatabase, config])
+
+  // 注册异步加载字段回调（供补全引擎在遇到未知表时调用）
+  useEffect(() => {
+    if (!config || !selectedDatabase) return
+    setLoadColumnsFn(async (table: string) => {
+      const res = await window.api.db.getTableColumns(config, selectedDatabase!, table)
+      if (res.success && res.data) {
+        const ctx = getCompletionContext()
+        setCompletionContext({
+          ...ctx,
+          columns: {
+            ...ctx.columns,
+            [table]: res.data!.map((c) => c.name)
+          }
+        })
+        return res.data!.map((c) => c.name)
+      }
+      return []
+    })
+    return () => setLoadColumnsFn(async () => [])
+  }, [config, selectedDatabase])
+
+  // 选中表时加载字段名用于补全（确保当前选中表的字段已缓存）
   useEffect(() => {
     if (!config || !selectedDatabase || !selectedTable) return
     const loadColumnsForCompletion = async () => {
-      const res = await window.api.db.getTableColumns(config, selectedDatabase, selectedTable)
+      const ctx = getCompletionContext()
+      if (ctx.columns[selectedTable] && ctx.columns[selectedTable].length > 0) return
+      const res = await window.api.db.getTableColumns(config, selectedDatabase!, selectedTable)
       if (res.success && res.data) {
-        const ctx = getCompletionContext()
         setCompletionContext({
           ...ctx,
           columns: {
@@ -157,14 +214,39 @@ export default function MiddlePanel() {
     }
   }, [config, selectedDatabase, selectedTable, selectedCategory, selectTable, refreshList])
 
+  const openTableData = useTabStore((s) => s.openTableData)
+  const openTableDesign = useTabStore((s) => s.openTableDesign)
+  const openQuery = useTabStore((s) => s.openQuery)
+  const openErDiagram = useTabStore((s) => s.openErDiagram)
+
   const handleAdd = useCallback(() => {
+    if (selectedCategory === 'query') {
+      if (selectedConnectionId) openQuery(selectedConnectionId, selectedDatabase ?? undefined)
+      return
+    }
     startCreating()
-  }, [startCreating])
+  }, [startCreating, selectedCategory, selectedConnectionId, selectedDatabase, openQuery])
 
   const handleEdit = useCallback(() => {
-    if (!selectedTable) return
-    startEditing()
-  }, [selectedTable, startEditing])
+    if (!selectedTable || !selectedConnectionId || !selectedDatabase) return
+    if (selectedCategory === 'tables') {
+      // 表：在中间区域新开一个表设计 Tab
+      openTableDesign(selectedConnectionId, selectedDatabase, selectedTable)
+    } else {
+      // 视图/函数/事件：在浏览器 Tab 内显示可编辑 DDL 编辑器
+      startEditing()
+    }
+  }, [selectedTable, selectedConnectionId, selectedDatabase, selectedCategory, openTableDesign, startEditing])
+
+  // 处理分类点击：ER 图直接开新 Tab，其他切换列表
+  const handleCategoryClick = useCallback((key: DbCategory) => {
+    if (!selectedConnectionId || !selectedDatabase) return
+    if (key === 'er') {
+      openErDiagram(selectedConnectionId, selectedDatabase)
+      return
+    }
+    selectCategory(key)
+  }, [selectedConnectionId, selectedDatabase, openQuery, openErDiagram, selectCategory])
 
   // ==================== 表右键菜单操作 ====================
 
@@ -287,11 +369,19 @@ export default function MiddlePanel() {
     const items: ContextMenuItem[] = [
       {
         label: '打开表数据',
-        onClick: () => selectTable(tableName, 'data')
+        onClick: () => {
+          if (selectedConnectionId && selectedDatabase) {
+            openTableData(selectedConnectionId, selectedDatabase, tableName)
+          }
+        }
       },
       {
-        label: '查看表结构',
-        onClick: () => selectTable(tableName, 'structure' as any)
+        label: '设计表结构',
+        onClick: () => {
+          if (selectedConnectionId && selectedDatabase) {
+            openTableDesign(selectedConnectionId, selectedDatabase, tableName)
+          }
+        }
       },
       { separator: true, label: '' },
       {
@@ -338,16 +428,82 @@ export default function MiddlePanel() {
       }
     ]
     setContextMenu({ x: e.clientX, y: e.clientY, items })
-  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, setContextMenu, setCompareSource])
+  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, setContextMenu, setCompareSource, selectedConnectionId, selectedDatabase, openTableData, openTableDesign])
 
   const tbBtn = "flex items-center gap-1 px-1.5 py-1 rounded text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-bg-hover text-text-secondary hover:text-text-primary"
 
   if (!selectedConnectionId || !selectedDatabase) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-text-muted text-sm p-4 gap-2">
+      <div className="flex flex-col items-center justify-center flex-1 text-text-muted text-sm p-4 gap-2">
         <DatabaseIcon size={32} className="opacity-30" />
         <p className="text-center">点击左侧数据库</p>
         <p className="text-center text-xs">查看表列表</p>
+      </div>
+    )
+  }
+
+  // 新建设计器模式 — 在浏览器 Tab 内显示
+  if (isCreating && selectedConnectionId && selectedDatabase) {
+    if (selectedCategory === 'tables') return <NewTableDesigner />
+    if (selectedCategory === 'views') return <NewViewDesigner />
+    if (selectedCategory === 'functions') return <NewRoutineDesigner />
+    if (selectedCategory === 'events') return <NewEventDesigner />
+  }
+
+  // 编辑模式（视图/函数/事件）— 在浏览器 Tab 内显示可编辑 DDL 编辑器
+  if (isEditing && selectedTable && selectedConnectionId && selectedDatabase) {
+    if (selectedCategory === 'views') {
+      return (
+        <EditableObjectEditor
+          type="view"
+          loadSql={`SHOW CREATE VIEW \`${selectedTable}\``}
+          dropSql={`DROP VIEW IF EXISTS \`${selectedTable}\``}
+        />
+      )
+    }
+    if (selectedCategory === 'functions') {
+      const routine = routines.find((r) => r.name === selectedTable)
+      const isFunc = routine?.type === 'FUNCTION'
+      return (
+        <EditableObjectEditor
+          type={isFunc ? 'function' : 'procedure'}
+          loadSql={isFunc ? `SHOW CREATE FUNCTION \`${selectedTable}\`` : `SHOW CREATE PROCEDURE \`${selectedTable}\``}
+          dropSql={isFunc ? `DROP FUNCTION IF EXISTS \`${selectedTable}\`` : `DROP PROCEDURE IF EXISTS \`${selectedTable}\``}
+        />
+      )
+    }
+    if (selectedCategory === 'events') {
+      return (
+        <EditableObjectEditor
+          type="event"
+          loadSql={`SHOW CREATE EVENT \`${selectedTable}\``}
+          dropSql={`DROP EVENT IF EXISTS \`${selectedTable}\``}
+        />
+      )
+    }
+  }
+
+  // 表结构对比模式
+  if (compareSource && config && selectedConnectionId && selectedDatabase) {
+    return (
+      <div className="flex flex-col flex-1 min-h-0 bg-bg-primary">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-light bg-bg-secondary flex-shrink-0">
+          <span className="text-xs font-medium text-text-primary">表结构对比：{compareSource.table}</span>
+          <button
+            onClick={() => setCompareSource(null)}
+            className="px-2 py-0.5 text-xs rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+          >
+            关闭
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <TableCompareView
+            leftConfig={config}
+            leftDatabase={selectedDatabase}
+            leftTable={compareSource.table}
+            onClose={() => setCompareSource(null)}
+          />
+        </div>
       </div>
     )
   }
@@ -364,9 +520,9 @@ export default function MiddlePanel() {
   ]
 
   return (
-    <div className="flex flex-col h-full bg-bg-secondary">
+    <div className="flex flex-col flex-1 min-h-0 bg-bg-secondary">
       {/* 头部 */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border-light">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border-light flex-shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <DatabaseIcon size={14} className="text-accent-light flex-shrink-0" />
           <span className="text-xs font-semibold text-text-primary truncate">{selectedDatabase}</span>
@@ -378,7 +534,7 @@ export default function MiddlePanel() {
         {categories.map((cat) => (
           <button
             key={cat.key}
-            onClick={() => selectCategory(cat.key)}
+            onClick={() => handleCategoryClick(cat.key)}
             className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${
               selectedCategory === cat.key
                 ? 'text-text-primary border-accent bg-bg-primary'
@@ -392,7 +548,7 @@ export default function MiddlePanel() {
       </div>
 
       {/* 工具栏 */}
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-border-light">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-border-light flex-shrink-0">
         <button onClick={loadData} disabled={listLoading} className={tbBtn} title="刷新">
           {listLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
         </button>
@@ -427,7 +583,7 @@ export default function MiddlePanel() {
       )}
 
       {/* 列表内容 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {listLoading && (
           <div className="flex items-center justify-center py-4 text-text-muted text-xs gap-1.5">
             <Loader2 size={14} className="animate-spin" />
@@ -444,7 +600,11 @@ export default function MiddlePanel() {
                 filteredTables={search ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())) : tables}
                 selectedTable={selectedTable}
                 onSelect={(name) => selectTable(name, 'info')}
-                onDoubleClick={(name) => selectTable(name, 'data')}
+                onDoubleClick={(name) => {
+                  if (selectedConnectionId && selectedDatabase) {
+                    openTableData(selectedConnectionId, selectedDatabase, name)
+                  }
+                }}
                 onContextMenu={handleTableContextMenu}
               />
             )}
@@ -762,13 +922,10 @@ function QueryList() {
   const {
     savedQueries,
     selectedDatabase,
-    selectedQueryId,
-    selectQuery,
-    deleteQuery,
-    setActiveQuerySql,
-    selectedTable,
-    selectTable
+    selectedConnectionId,
+    deleteQuery
   } = useBrowserStore()
+  const openTab = useTabStore((s) => s.openTab)
 
   // 只显示当前数据库的查询
   const dbQueries = savedQueries.filter((q) => q.database === selectedDatabase)
@@ -778,7 +935,7 @@ function QueryList() {
       <div className="flex flex-col items-center justify-center py-8 text-text-muted text-xs gap-2">
         <Terminal size={28} className="opacity-20" />
         <span>暂无保存的查询</span>
-        <span className="text-[10px]">在右侧编辑器输入 SQL 后点击「保存」</span>
+        <span className="text-[10px]">点击标签栏 + 号新建查询，保存后会出现在这里</span>
       </div>
     )
   }
@@ -788,16 +945,24 @@ function QueryList() {
       {dbQueries.map((q) => (
         <div
           key={q.id}
-          onClick={() => { selectQuery(q.id); selectTable(null) }}
-          className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 transition-colors group ${
-            selectedQueryId === q.id
-              ? 'bg-accent/20 border-l-2 border-l-accent'
-              : 'hover:bg-bg-hover border-l-2 border-l-transparent'
-          }`}
+          onClick={() => {
+            if (selectedConnectionId) {
+              openTab({
+                id: `query-${q.id}-${Date.now()}`,
+                type: 'query',
+                title: q.name,
+                connectionId: selectedConnectionId,
+                database: selectedDatabase ?? undefined,
+                sql: q.sql,
+                savedQueryId: q.id
+              })
+            }
+          }}
+          className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 transition-colors group hover:bg-bg-hover border-l-2 border-l-transparent`}
         >
           <Bookmark size={13} className="text-yellow-400 flex-shrink-0" />
           <div className="flex-1 min-w-0">
-            <span className={`text-xs truncate block ${selectedQueryId === q.id ? 'text-text-primary font-medium' : 'text-text-primary/90'}`}>
+            <span className="text-xs truncate block text-text-primary/90">
               {q.name}
             </span>
             <span className="text-[10px] text-text-muted truncate block font-mono mt-0.5">

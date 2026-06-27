@@ -189,7 +189,7 @@ export interface IpcResponse<T = unknown> {
 
 // ==================== Tab 类型 ====================
 
-export type TabType = 'query' | 'table-data' | 'table-design'
+export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet'
 
 export interface Tab {
   id: string
@@ -200,4 +200,6 @@ export interface Tab {
   table?: string
   icon?: string
   dirty?: boolean
+  sql?: string
+  savedQueryId?: string
 }

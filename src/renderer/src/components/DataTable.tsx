@@ -23,7 +23,9 @@ import {
   PanelBottomClose,
   Download,
   Upload,
-  ChevronDown
+  ChevronDown,
+  Copy,
+  ClipboardPaste
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import type { Tab, ColumnInfo, QueryResult } from '@shared/types'
@@ -118,6 +120,56 @@ function escapeVal(val: unknown): string {
   return `'${str.replace(/'/g, "\\'")}'`
 }
 
+/**
+ * 解析 SQL VALUES 中的值列表，支持：字符串（单引号）、数字、NULL
+ * 例如: 'hello', 123, NULL, 'it\'s'
+ */
+function parseValuesList(valStr: string): unknown[] {
+  const values: unknown[] = []
+  let i = 0
+  const s = valStr.trim()
+  while (i < s.length) {
+    // 跳过空白和逗号
+    while (i < s.length && (s[i] === ' ' || s[i] === ',' || s[i] === '\t')) i++
+    if (i >= s.length) break
+
+    if (s[i] === "'") {
+      // 字符串值
+      i++ // 跳过开引号
+      let val = ''
+      while (i < s.length) {
+        if (s[i] === "'" && s[i + 1] === "'") {
+          val += "'"
+          i += 2
+        } else if (s[i] === "'" && s[i - 1] === '\\') {
+          val = val.slice(0, -1) + "'"
+          i++
+        } else if (s[i] === "'") {
+          i++ // 跳过闭引号
+          break
+        } else {
+          val += s[i]
+          i++
+        }
+      }
+      values.push(val)
+    } else if (s.substring(i, i + 4).toUpperCase() === 'NULL') {
+      values.push(null)
+      i += 4
+    } else {
+      // 数字或其他字面量
+      let val = ''
+      while (i < s.length && s[i] !== ',' && s[i] !== ' ') {
+        val += s[i]
+        i++
+      }
+      const num = Number(val)
+      values.push(isNaN(num) ? val : num)
+    }
+  }
+  return values
+}
+
 export default function DataTable({ tab }: Props) {
   const connections = useConnectionStore((s) => s.connections)
   const config = connections.find((c) => c.id === tab.connectionId)
@@ -146,18 +198,36 @@ export default function DataTable({ tab }: Props) {
   const [pendingDeletes, setPendingDeletes] = useState<RowData[]>([])
   const [snapshotMap, setSnapshotMap] = useState<Map<string, RowData>>(new Map())
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [progress, setProgress] = useState<{ current: number; total: number; label: string } | null>(null)
 
   // 单元格右键菜单
   const [cellMenu, setCellMenu] = useState<{ x: number; y: number; rowKey: string; colName: string; colType: string } | null>(null)
   const [datePicker, setDatePicker] = useState<{ rowKey: string; colName: string; value: string } | null>(null)
 
-  // 底部字段编辑器
-  const [showEditor, setShowEditor] = useState(false)
+  // 底部字段编辑器（默认打开）
+  const [showEditor, setShowEditor] = useState(true)
   const [editorRowKey, setEditorRowKey] = useState<string | null>(null)
   const [editorColName, setEditorColName] = useState<string | null>(null)
 
   // 导出/导入下拉菜单
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [showImportMenu, setShowImportMenu] = useState(false)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+  const importMenuRef = useRef<HTMLDivElement>(null)
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false)
+      }
+      if (importMenuRef.current && !importMenuRef.current.contains(e.target as Node)) {
+        setShowImportMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   const abortRef = useRef(false)
   const msgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -279,6 +349,93 @@ export default function DataTable({ tab }: Props) {
   }, [columns])
 
   // ==================== 删除 ====================
+
+  // 全选/反选
+  const isAllSelected = useMemo(
+    () => rows.length > 0 && rows.every((r) => selectedRows.has(r._row_key)),
+    [rows, selectedRows]
+  )
+
+  const toggleRow = useCallback((key: string) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const toggleAll = useCallback(() => {
+    if (isAllSelected) {
+      setSelectedRows(new Set())
+    } else {
+      setSelectedRows(new Set(rows.map((r) => r._row_key)))
+    }
+  }, [isAllSelected, rows])
+
+  // ==================== 复制/粘贴 ====================
+
+  const handleCopyRows = useCallback(() => {
+    if (selectedRows.size === 0) {
+      showMsg('error', '请先选择要复制的行')
+      return
+    }
+    const selectedData = rows.filter((r) => selectedRows.has(r._row_key))
+    // 生成 INSERT SQL
+    const colNames = columns.map((c) => `\`${c.name}\``).join(', ')
+    const lines = selectedData.map((row) => {
+      const colVals = columns.map((c) => escapeVal(row[c.name])).join(', ')
+      return `INSERT INTO \`${tab.table}\` (${colNames}) VALUES (${colVals});`
+    })
+    const sql = lines.join('\n')
+    navigator.clipboard.writeText(sql).then(
+      () => showMsg('success', `已复制 ${selectedData.length} 行（INSERT SQL）`),
+      () => showMsg('error', '复制到剪贴板失败')
+    )
+  }, [selectedRows, rows, columns, tab.table, showMsg])
+
+  const handlePasteRows = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text || !text.trim()) {
+        showMsg('error', '剪贴板为空')
+        return
+      }
+      // 解析 INSERT INTO ... VALUES (...) 语句
+      const insertPattern = /INSERT\s+INTO\s+`?(\w+)`?\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/gi
+      let match: RegExpExecArray | null
+      let addedCount = 0
+      const newRowsList: RowData[] = []
+      const newKeysSet = new Set(newKeys)
+
+      while ((match = insertPattern.exec(text)) !== null) {
+        const valStr = match[3]
+        // 解析 VALUES 中的值（支持引号字符串和 NULL）
+        const values = parseValuesList(valStr)
+        if (values.length !== columns.length) continue
+
+        const key = genRowKey()
+        const newRow: RowData = { _row_key: key, _row_num: 0 }
+        columns.forEach((col, idx) => {
+          newRow[col.name] = values[idx]
+        })
+        newRowsList.push(newRow)
+        newKeysSet.add(key)
+        addedCount++
+      }
+
+      if (addedCount === 0) {
+        showMsg('error', '无法解析剪贴板内容（需要 INSERT SQL 格式）')
+        return
+      }
+
+      setRows((prev) => [...prev, ...newRowsList])
+      setNewKeys(newKeysSet)
+      showMsg('success', `已粘贴 ${addedCount} 行`)
+    } catch (err) {
+      showMsg('error', `粘贴失败: ${(err as Error).message}`)
+    }
+  }, [columns, newKeys, showMsg])
 
   const handleDeleteRows = useCallback(() => {
     if (selectedRows.size === 0) {
@@ -520,11 +677,12 @@ export default function DataTable({ tab }: Props) {
   }
 
   // ==================== 导出 ====================
-
+  
   const handleExport = useCallback(async (format: 'csv' | 'json' | 'sql') => {
     setShowExportMenu(false)
     if (!config || !tab.database || !tab.table) return
     try {
+      setProgress({ current: 0, total: 100, label: '查询数据...' })
       // 查询全表数据（含筛选条件）
       let sql = `SELECT * FROM \`${tab.table}\``
       if (appliedConditions.length > 0) {
@@ -540,49 +698,71 @@ export default function DataTable({ tab }: Props) {
         sql += ` WHERE ${whereParts.join(' ')}`
       }
       const res = await window.api.db.query(config, sql, tab.database)
-      if (!res.success || !res.data) { showMsg('error', `导出失败: ${res.error}`); return }
-
+      if (!res.success || !res.data) { showMsg('error', `导出失败: ${res.error}`); setProgress(null); return }
+  
       const dataRows = res.data.rows
       const cols = (res.data.columns ?? []).map((c) => c.name)
       let content = ''
       let ext = format
-
+      const total = dataRows.length
+  
       if (format === 'csv') {
-        content = [cols.join(',')].concat(
-          dataRows.map((row) => cols.map((c) => {
-            const v = row[c]
+        setProgress({ current: 0, total, label: '生成 CSV...' })
+        const lines: string[] = [cols.join(',')]
+        for (let i = 0; i < dataRows.length; i++) {
+          lines.push(cols.map((c) => {
+            const v = dataRows[i][c]
             if (v === null || v === undefined) return ''
             const s = String(v)
-            // 含逗号/引号/换行需加引号转义
             return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
           }).join(','))
-        ).join('\n')
+          if ((i + 1) % 500 === 0 || i === dataRows.length - 1) {
+            setProgress({ current: i + 1, total, label: '生成 CSV...' })
+            await new Promise((r) => setTimeout(r, 0))
+          }
+        }
+        content = lines.join('\n')
       } else if (format === 'json') {
-        const jsonRows = dataRows.map((row) => {
+        setProgress({ current: 0, total, label: '生成 JSON...' })
+        const jsonRows: Record<string, unknown>[] = []
+        for (let i = 0; i < dataRows.length; i++) {
           const obj: Record<string, unknown> = {}
-          cols.forEach((c) => obj[c] = row[c])
-          return obj
-        })
+          cols.forEach((c) => obj[c] = dataRows[i][c])
+          jsonRows.push(obj)
+          if ((i + 1) % 500 === 0 || i === dataRows.length - 1) {
+            setProgress({ current: i + 1, total, label: '生成 JSON...' })
+            await new Promise((r) => setTimeout(r, 0))
+          }
+        }
         content = JSON.stringify(jsonRows, null, 2)
       } else if (format === 'sql') {
+        setProgress({ current: 0, total: total + 1, label: '获取表结构...' })
         const colNames = cols.map((c) => `\`${c}\``).join(', ')
         content = `-- nexSQL 导出\n-- 数据库: ${tab.database}\n-- 表: ${tab.table}\n-- 生成时间: ${new Date().toLocaleString()}\n\n`
         content += `DROP TABLE IF EXISTS \`${tab.table}\`;\n`
         const ddlRes = await window.api.db.getTableDDL(config, tab.database, tab.table)
         if (ddlRes.success && ddlRes.data) content += ddlRes.data + ';\n\n'
+        setProgress({ current: 1, total: total + 1, label: '生成 SQL...' })
         if (dataRows.length > 0) {
-          for (const row of dataRows) {
-            const vals = cols.map((c) => escapeVal(row[c]))
+          for (let i = 0; i < dataRows.length; i++) {
+            const vals = cols.map((c) => escapeVal(dataRows[i][c]))
             content += `INSERT INTO \`${tab.table}\` (${colNames}) VALUES (${vals.join(', ')});\n`
+            if ((i + 1) % 500 === 0 || i === dataRows.length - 1) {
+              setProgress({ current: i + 2, total: total + 1, label: '生成 SQL...' })
+              await new Promise((r) => setTimeout(r, 0))
+            }
           }
         }
       }
-
+  
+      setProgress({ current: total, total, label: '保存文件...' })
       const saveRes = await window.api.file.saveDialog(`${tab.table}_export.${ext}`, content, ext)
       if (saveRes.success && saveRes.data?.saved) {
         showMsg('success', `导出成功 (${dataRows.length} 行)`)
       }
+      setProgress(null)
     } catch (err) {
+      setProgress(null)
       showMsg('error', `导出失败: ${(err as Error).message}`)
     }
   }, [config, tab, appliedConditions, showMsg])
@@ -603,16 +783,20 @@ export default function DataTable({ tab }: Props) {
       const colNames = columns.map((c) => `\`${c.name}\``).join(', ')
 
       if (format === 'sql') {
-        // 按 ; 分割执行
         const statements = content.split(';').map((s) => s.trim()).filter((s) => s && !s.startsWith('--'))
-        for (const stmt of statements) {
-          const res = await window.api.db.query(config, stmt, tab.database)
+        const total = statements.length
+        setProgress({ current: 0, total, label: '执行 SQL...' })
+        for (let i = 0; i < statements.length; i++) {
+          const res = await window.api.db.query(config, statements[i], tab.database)
           if (res.success) insertCount += res.data?.affectedRows ?? 0
+          if ((i + 1) % 20 === 0 || i === statements.length - 1) {
+            setProgress({ current: i + 1, total, label: '执行 SQL...' })
+            await new Promise((r) => setTimeout(r, 0))
+          }
         }
       } else if (format === 'csv') {
         const lines = content.split('\n').filter((l) => l.trim())
-        if (lines.length < 2) { showMsg('error', 'CSV 至少需要标题行 + 1 行数据'); setLoading(false); return }
-        // CSV 解析（支持引号包裹的逗号）
+        if (lines.length < 2) { showMsg('error', 'CSV 至少需要标题行 + 1 行数据'); setLoading(false); setProgress(null); return }
         const parseCSVLine = (line: string): string[] => {
           const result: string[] = []
           let current = ''
@@ -632,6 +816,8 @@ export default function DataTable({ tab }: Props) {
           return result
         }
         const headers = parseCSVLine(lines[0])
+        const dataLines = lines.length - 1
+        setProgress({ current: 0, total: dataLines, label: '导入 CSV...' })
         for (let i = 1; i < lines.length; i++) {
           const values = parseCSVLine(lines[i])
           const vals = columns.map((c) => {
@@ -643,20 +829,32 @@ export default function DataTable({ tab }: Props) {
           }).join(', ')
           const res = await window.api.db.query(config, `INSERT INTO \`${tab.table}\` (${colNames}) VALUES (${vals})`, tab.database)
           if (res.success) insertCount++
+          if ((i) % 50 === 0 || i === lines.length - 1) {
+            setProgress({ current: i, total: dataLines, label: '导入 CSV...' })
+            await new Promise((r) => setTimeout(r, 0))
+          }
         }
       } else if (format === 'json') {
         const items = JSON.parse(content)
-        if (!Array.isArray(items)) { showMsg('error', 'JSON 必须是数组'); setLoading(false); return }
-        for (const item of items) {
-          const vals = columns.map((c) => escapeVal((item as Record<string, unknown>)[c.name])).join(', ')
+        if (!Array.isArray(items)) { showMsg('error', 'JSON 必须是数组'); setLoading(false); setProgress(null); return }
+        const total = items.length
+        setProgress({ current: 0, total, label: '导入 JSON...' })
+        for (let i = 0; i < items.length; i++) {
+          const vals = columns.map((c) => escapeVal((items[i] as Record<string, unknown>)[c.name])).join(', ')
           const res = await window.api.db.query(config, `INSERT INTO \`${tab.table}\` (${colNames}) VALUES (${vals})`, tab.database)
           if (res.success) insertCount++
+          if ((i + 1) % 50 === 0 || i === items.length - 1) {
+            setProgress({ current: i + 1, total, label: '导入 JSON...' })
+            await new Promise((r) => setTimeout(r, 0))
+          }
         }
       }
 
+      setProgress(null)
       showMsg('success', `导入成功 (${insertCount} 行)`)
       await loadData()
     } catch (err) {
+      setProgress(null)
       showMsg('error', `导入失败: ${(err as Error).message}`)
     } finally {
       setLoading(false)
@@ -681,16 +879,63 @@ export default function DataTable({ tab }: Props) {
     }
   }, [handleImport, handleExport])
 
+  // 全局快捷键监听：Ctrl+C 复制 / Ctrl+V 粘贴
+  const gridRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      // 焦点在其他输入框时不拦截
+      const active = document.activeElement as HTMLElement
+      const tag = active?.tagName
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
+      if (isEditable) return
+      // 焦点不在本表格区域时不响应（但允许 body/html 级别的焦点）
+      if (active && active !== document.body && active !== document.documentElement
+          && !gridRef.current?.contains(active)) {
+        return
+      }
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault()
+        handleCopyRows()
+      } else if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault()
+        handlePasteRows()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleCopyRows, handlePasteRows])
+
   // ==================== 列定义 ====================
 
   const gridColumns = useMemo((): Column<RowData>[] => {
     const cols: Column<RowData>[] = [
       {
-        key: '_row_num',
-        name: '#',
-        width: 50,
+        key: '_select',
+        name: '',
+        width: 40,
         frozen: true,
-        resizable: false
+        resizable: false,
+        renderHeaderCell: () => (
+          <div className="flex items-center justify-center h-full">
+            <input
+              type="checkbox"
+              checked={isAllSelected}
+              onChange={toggleAll}
+              className="accent-accent cursor-pointer w-3.5 h-3.5"
+            />
+          </div>
+        ),
+        renderCell: ({ row }) => (
+          <div className="flex items-center justify-center h-full">
+            <input
+              type="checkbox"
+              checked={selectedRows.has(row._row_key)}
+              onChange={() => toggleRow(row._row_key)}
+              className="accent-accent cursor-pointer w-3.5 h-3.5"
+            />
+          </div>
+        )
       },
       ...columns.map<Column<RowData>>((col) => ({
         key: col.name,
@@ -701,10 +946,12 @@ export default function DataTable({ tab }: Props) {
         renderEditCell: textEditor,
         editorOptions: { commitOnOutsideClick: true },
         renderHeaderCell: () => (
-          <div className="flex items-center gap-1 w-full">
-            {col.isPrimaryKey && <Key size={10} className="text-yellow-400 flex-shrink-0" />}
-            <span className={col.isPrimaryKey ? 'text-yellow-400 font-medium' : ''}>{col.name}</span>
-            <span className="text-text-muted text-[10px] font-normal">{col.type}</span>
+          <div className="flex flex-col justify-center w-full h-full px-0.5 leading-tight">
+            <div className="flex items-center gap-1">
+              {col.isPrimaryKey && <Key size={9} className="text-yellow-400 flex-shrink-0" />}
+              <span className={`truncate text-xs ${col.isPrimaryKey ? 'text-yellow-400 font-medium' : ''}`}>{col.name}</span>
+            </div>
+            <span className="text-text-muted text-[12px] font-normal truncate -mt-0.5">{col.type}</span>
           </div>
         ),
         renderCell: ({ row }) => {
@@ -784,7 +1031,7 @@ export default function DataTable({ tab }: Props) {
       }))
     ]
     return cols
-  }, [columns, editorRowKey, editorColName, handleCellContextMenu])
+  }, [columns, editorRowKey, editorColName, handleCellContextMenu, selectedRows, isAllSelected, toggleRow, toggleAll])
 
   const rowKeyGetter = useCallback((row: RowData) => row._row_key, [])
 
@@ -802,7 +1049,7 @@ export default function DataTable({ tab }: Props) {
     setSortColumns(newSortColumns)
     if (newSortColumns.length > 0) {
       const sc = newSortColumns[0]
-      if (sc.columnKey === '_row_num') {
+      if (sc.columnKey === '_select') {
         setSortCol(null)
         setSortDir(null)
       } else {
@@ -903,6 +1150,32 @@ export default function DataTable({ tab }: Props) {
           <Trash2 size={14} />
         </button>
 
+        {/* 复制选中行 */}
+        <button
+          onClick={handleCopyRows}
+          disabled={loading || selectedRows.size === 0}
+          className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-accent`}
+          title="复制选中行（INSERT SQL）"
+        >
+          <Copy size={14} />
+        </button>
+
+        {/* 粘贴 */}
+        <button
+          onClick={handlePasteRows}
+          disabled={loading || columns.length === 0}
+          className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-accent`}
+          title="粘贴为新增行"
+        >
+          <ClipboardPaste size={14} />
+        </button>
+
+        {selectedRows.size > 0 && (
+          <span className="px-1.5 py-0.5 bg-accent/20 text-accent rounded text-[10px] font-medium">
+            已选 {selectedRows.size} 行
+          </span>
+        )}
+
         <div className="h-4 w-px bg-border-light mx-1" />
 
         {/* Commit */}
@@ -957,18 +1230,28 @@ export default function DataTable({ tab }: Props) {
           {showEditor ? <PanelBottomClose size={14} /> : <PanelBottomOpen size={14} />}
         </button>
 
-        {/* 导入 */}
-        <button
-          onClick={() => handleImport('csv')}
-          disabled={loading || columns.length === 0}
-          className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`}
-          title="导入 CSV"
-        >
-          <Upload size={14} />
-        </button>
+        {/* 导入（下拉菜单） */}
+        <div className="relative" ref={importMenuRef}>
+          <button
+            onClick={() => setShowImportMenu((v) => !v)}
+            disabled={loading || columns.length === 0}
+            className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`}
+            title="导入数据"
+          >
+            <Upload size={14} />
+            <ChevronDown size={10} />
+          </button>
+          {showImportMenu && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[120px]">
+              <button onClick={() => { setShowImportMenu(false); handleImport('csv') }} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 CSV</button>
+              <button onClick={() => { setShowImportMenu(false); handleImport('json') }} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 JSON</button>
+              <button onClick={() => { setShowImportMenu(false); handleImport('sql') }} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 SQL</button>
+            </div>
+          )}
+        </div>
 
         {/* 导出（下拉菜单） */}
-        <div className="relative">
+        <div className="relative" ref={exportMenuRef}>
           <button
             onClick={() => setShowExportMenu((v) => !v)}
             disabled={loading || columns.length === 0}
@@ -983,10 +1266,6 @@ export default function DataTable({ tab }: Props) {
               <button onClick={() => handleExport('csv')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 CSV</button>
               <button onClick={() => handleExport('json')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 JSON</button>
               <button onClick={() => handleExport('sql')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 SQL</button>
-              <div className="h-px bg-border-light my-1" />
-              <button onClick={() => handleImport('csv')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 CSV</button>
-              <button onClick={() => handleImport('json')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 JSON</button>
-              <button onClick={() => handleImport('sql')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 SQL</button>
             </div>
           )}
         </div>
@@ -1159,11 +1438,13 @@ export default function DataTable({ tab }: Props) {
         )}
 
         {!loading && !error && rows.length > 0 && (
+          <div ref={gridRef} className="h-full">
           <DataGrid
             columns={gridColumns}
             rows={rows}
             className="rdg-dark fill-grid"
             style={{ height: '100%' }}
+            headerRowHeight={42}
             sortColumns={sortColumns}
             onSortColumnsChange={handleSortChange}
             onRowsChange={handleRowsChange}
@@ -1173,6 +1454,7 @@ export default function DataTable({ tab }: Props) {
             rowClass={rowClass}
             defaultColumnOptions={{ resizable: true, sortable: true, width: 150 }}
           />
+          </div>
         )}
 
         {!loading && !error && rows.length === 0 && (
@@ -1196,6 +1478,22 @@ export default function DataTable({ tab }: Props) {
           onCellValueChange={setCellValue}
           onClose={() => setShowEditor(false)}
         />
+      )}
+
+      {/* 进度条 */}
+      {progress && (
+        <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border-light bg-bg-secondary flex-shrink-0">
+          <span className="text-[11px] text-text-secondary flex-shrink-0 w-24 truncate">{progress.label}</span>
+          <div className="flex-1 h-1.5 bg-bg-tertiary rounded-full overflow-hidden">
+            <div
+              className="h-full bg-accent rounded-full transition-all duration-150"
+              style={{ width: `${progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0}%` }}
+            />
+          </div>
+          <span className="text-[11px] text-text-muted flex-shrink-0 w-20 text-right">
+            {progress.current} / {progress.total}
+          </span>
+        </div>
       )}
 
       {/* 底部状态栏 */}
@@ -1337,6 +1635,26 @@ function CellContextMenu({
 
 // ==================== 底部字段编辑器面板 ====================
 
+const EDITOR_HEIGHT_KEY = 'nexsql-editor-height'
+const DEFAULT_EDITOR_HEIGHT = 220
+const MIN_EDITOR_HEIGHT = 100
+const MAX_EDITOR_HEIGHT = 600
+
+function loadEditorHeight(): number {
+  try {
+    const v = localStorage.getItem(EDITOR_HEIGHT_KEY)
+    if (v) {
+      const n = parseInt(v, 10)
+      if (n >= MIN_EDITOR_HEIGHT && n <= MAX_EDITOR_HEIGHT) return n
+    }
+  } catch {}
+  return DEFAULT_EDITOR_HEIGHT
+}
+
+function saveEditorHeight(h: number) {
+  try { localStorage.setItem(EDITOR_HEIGHT_KEY, String(h)) } catch {}
+}
+
 interface FieldEditorPanelProps {
   columns: ColumnInfo[]
   rows: RowData[]
@@ -1359,6 +1677,38 @@ function FieldEditorPanel({
   const [isNull, setIsNull] = useState(false)
   const [textValue, setTextValue] = useState('')
   const [viewMode, setViewMode] = useState<'text' | 'json' | 'html'>('text')
+  const [editorHeight, setEditorHeight] = useState(loadEditorHeight)
+  const resizingRef = useRef(false)
+  const startYRef = useRef(0)
+  const startHRef = useRef(0)
+  const curHRef = useRef(editorHeight)
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    resizingRef.current = true
+    startYRef.current = e.clientY
+    startHRef.current = editorHeight
+    curHRef.current = editorHeight
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      const delta = startYRef.current - ev.clientY
+      const newH = Math.min(MAX_EDITOR_HEIGHT, Math.max(MIN_EDITOR_HEIGHT, startHRef.current + delta))
+      curHRef.current = newH
+      setEditorHeight(newH)
+    }
+    const onUp = () => {
+      resizingRef.current = false
+      saveEditorHeight(curHRef.current)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [editorHeight])
 
   const selectedRow = useMemo(
     () => rows.find((r) => r._row_key === editorRowKey) ?? null,
@@ -1483,7 +1833,16 @@ function FieldEditorPanel({
   }, [selectedRow, selectedCol])
 
   return (
-    <div className="flex border-t border-border bg-bg-tertiary flex-shrink-0" style={{ height: '180px' }}>
+    <div className="flex flex-col flex-shrink-0 border-t border-border">
+      {/* 拖拽调整高度手柄 */}
+      <div
+        onMouseDown={handleResizeStart}
+        className="h-1.5 bg-bg-tertiary hover:bg-accent/40 cursor-row-resize flex items-center justify-center transition-colors group flex-shrink-0"
+        title="拖拽调整高度"
+      >
+        <div className="w-8 h-0.5 bg-border-light rounded group-hover:bg-accent/60 transition-colors" />
+      </div>
+      <div className="flex bg-bg-tertiary flex-shrink-0" style={{ height: editorHeight }}>
       {/* 左侧：字段列表 */}
       <div className="w-44 border-r border-border-light flex flex-col flex-shrink-0">
         <div className="px-2 py-1 text-[10px] font-medium text-text-muted border-b border-border-light uppercase tracking-wider flex-shrink-0">
@@ -1641,6 +2000,7 @@ function FieldEditorPanel({
             {textValue.length} 字符
           </div>
         )}
+      </div>
       </div>
     </div>
   )

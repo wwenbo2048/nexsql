@@ -52,6 +52,7 @@ interface BrowserState {
   activeQuerySql: string
   selectedQueryId: string | null
   compareSource: { table: string } | null
+  search: string
 
   // Actions
   selectDatabase: (connectionId: string, database: string) => void
@@ -60,6 +61,7 @@ interface BrowserState {
   setActiveQuerySql: (sql: string) => void
   selectQuery: (id: string | null) => void
   saveQuery: (name: string, sql: string) => void
+  updateQuery: (id: string, sql: string) => void
   deleteQuery: (id: string) => void
   setTables: (tables: TableInfo[]) => void
   setViews: (views: ViewInfo[]) => void
@@ -72,6 +74,7 @@ interface BrowserState {
   startEditing: () => void
   stopEditing: () => void
   setCompareSource: (source: { table: string } | null) => void
+  setSearch: (search: string) => void
   clearSelection: () => void
 }
 
@@ -93,6 +96,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   activeQuerySql: '',
   selectedQueryId: null,
   compareSource: null,
+  search: '',
 
   selectDatabase: (connectionId, database) =>
     set({
@@ -140,6 +144,13 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     set({ savedQueries: updated, selectedQueryId: newQuery.id })
   },
 
+  updateQuery: (id, sql) => {
+    const state = get()
+    const updated = state.savedQueries.map((q) => q.id === id ? { ...q, sql } : q)
+    persistSavedQueries(updated)
+    set({ savedQueries: updated })
+  },
+
   deleteQuery: (id) => {
     const state = get()
     const updated = state.savedQueries.filter((q) => q.id !== id)
@@ -164,6 +175,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   stopEditing: () => set({ isEditing: false }),
 
   setCompareSource: (source) => set({ compareSource: source }),
+
+  setSearch: (search) => set({ search }),
 
   clearSelection: () =>
     set({

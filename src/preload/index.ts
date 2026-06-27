@@ -69,16 +69,32 @@ const api = {
       ipcRenderer.invoke('db:getERRelations', config, database),
     getERTableColumns: (config: ConnectionConfig, database: string): Promise<IpcResponse> =>
       ipcRenderer.invoke('db:getERTableColumns', config, database),
-    dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }): Promise<IpcResponse<string>> =>
-      ipcRenderer.invoke('db:dumpDatabase', config, database, options),
-    restoreDatabase: (config: ConnectionConfig, database: string, sql: string): Promise<IpcResponse<{ executed: number }>> =>
-      ipcRenderer.invoke('db:restoreDatabase', config, database, sql)
+    dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string): Promise<IpcResponse<string>> =>
+      ipcRenderer.invoke('db:dumpDatabase', config, database, options, operationId),
+    restoreDatabase: (config: ConnectionConfig, database: string, sql: string, operationId: string): Promise<IpcResponse<{ executed: number }>> =>
+      ipcRenderer.invoke('db:restoreDatabase', config, database, sql, operationId),
+    cancelOperation: (operationId: string): Promise<void> =>
+      ipcRenderer.invoke('db:cancelOperation', operationId),
+    onBackupProgress: (callback: (data: { operationId: string; current: string; index: number; total: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('db:backupProgress', handler)
+      return () => { ipcRenderer.removeListener('db:backupProgress', handler) }
+    },
+    onRestoreProgress: (callback: (data: { operationId: string; current: number; total: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('db:restoreProgress', handler)
+      return () => { ipcRenderer.removeListener('db:restoreProgress', handler) }
+    }
   },
 
   // 文件操作
   file: {
     saveDialog: (defaultName: string, content: string, filterExt?: string): Promise<IpcResponse<{ saved: boolean; path?: string }>> =>
       ipcRenderer.invoke('file:saveDialog', defaultName, content, filterExt),
+    savePathDialog: (defaultName: string, filterExt?: string): Promise<IpcResponse<{ saved: boolean; path?: string }>> =>
+      ipcRenderer.invoke('file:savePathDialog', defaultName, filterExt),
+    writeToFile: (filePath: string, content: string): Promise<IpcResponse<boolean>> =>
+      ipcRenderer.invoke('file:writeToFile', filePath, content),
     openDialog: (filterExt?: string): Promise<IpcResponse<{ canceled: boolean; content: string; path?: string }>> =>
       ipcRenderer.invoke('file:openDialog', filterExt)
   }

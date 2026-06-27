@@ -700,7 +700,8 @@ export async function dumpDatabase(
   config: ConnectionConfig,
   database: string,
   options: DumpOptions,
-  onProgress?: (p: DumpProgress) => void
+  onProgress?: (p: DumpProgress) => void,
+  shouldCancel?: () => boolean
 ): Promise<string> {
   const pool = await getPool(config)
   const conn = await pool.getConnection()
@@ -725,6 +726,7 @@ export async function dumpDatabase(
     sql += `SET FOREIGN_KEY_CHECKS = 0;\n\n`
 
     for (let i = 0; i < tableList.length; i++) {
+      if (shouldCancel?.()) throw new Error('已取消')
       const table = tableList[i]
       onProgress?.({ current: table, index: i + 1, total: tableList.length })
 
