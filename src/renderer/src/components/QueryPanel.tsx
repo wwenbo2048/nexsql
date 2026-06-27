@@ -35,6 +35,65 @@ const SQL_KEYWORDS = [
   'WITH', 'RECURSIVE',
 ]
 
+// 不应被当作表别名的 SQL 关键字
+const ALIAS_EXCLUDE_KEYWORDS = new Set([
+  'WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET', 'JOIN', 'LEFT', 'RIGHT',
+  'INNER', 'OUTER', 'FULL', 'CROSS', 'NATURAL', 'STRAIGHT_JOIN', 'ON', 'USING',
+  'UNION', 'INTERSECT', 'EXCEPT', 'SET', 'VALUES', 'AS', 'AND', 'OR', 'NOT', 'IS',
+  'IN', 'LIKE', 'BETWEEN', 'BY', 'ASC', 'DESC', 'ALL', 'DISTINCT', 'CASE', 'WHEN',
+  'THEN', 'ELSE', 'END', 'IF', 'EXISTS', 'ANY', 'SOME', 'WITH', 'RECURSIVE',
+  'FOR', 'LOCK', 'UNLOCK', 'SELECT', 'FROM', 'INTO', 'UPDATE', 'INSERT', 'DELETE',
+  'CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'RENAME', 'FORCE', 'IGNORE', 'USE',
+])
+
+interface QueryContext {
+  /** 别名/表名(小写) -> 真实表名 */
+  aliasMap: Record<string, string>
+  /** SQL 中引用的表总数（用于判断单表查询） */
+  tableCount: number
+  /** 有字段缓存的表名列表 */
+  knownTables: string[]
+}
+
+/**
+ * 解析 SQL 文本，提取表别名映射与表引用信息。
+ * 支持: FROM table [AS] alias / JOIN table [AS] alias / db.table
+ */
+function parseQueryContext(sql: string, tableColumnMap: Record<string, string[]>): QueryContext {
+  const aliasMap: Record<string, string> = {}
+  const knownTables: string[] = []
+  const seen = new Set<string>()
+  const allTables = new Set<string>()
+
+  const pattern = /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:`?[\w]+`?\s*\.\s*)?`?(\w+)`?(?:\s+(?:AS\s+)?(\w+))?/gi
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(sql)) !== null) {
+    const tableName = match[1]
+    const alias = match[2]
+
+    // 表名自身映射（小写 -> 真实名）
+    aliasMap[tableName.toLowerCase()] = tableName
+
+    // 统计唯一表引用数
+    if (!allTables.has(tableName.toLowerCase())) {
+      allTables.add(tableName.toLowerCase())
+    }
+
+    // 记录有字段缓存的表
+    if (tableColumnMap[tableName] && !seen.has(tableName)) {
+      seen.add(tableName)
+      knownTables.push(tableName)
+    }
+
+    // 别名映射（排除关键字）
+    if (alias && !ALIAS_EXCLUDE_KEYWORDS.has(alias.toUpperCase())) {
+      aliasMap[alias.toLowerCase()] = tableName
+    }
+  }
+
+  return { aliasMap, tableCount: allTables.size, knownTables }
+}
+
 export default function QueryPanel() {
   const connections = useConnectionStore((s) => s.connections)
   const {
@@ -199,6 +258,12 @@ export default function QueryPanel() {
     setExecuting(false)
   }, [config, selectedDatabase, activeQuerySql])
 
+  // Refs：onMount 仅触发一次，通过 ref 避免补全 Provider 闭包捕获过期数据
+  const autoCompleteDataRef = useRef(autoCompleteData)
+  const handleExecuteRef = useRef(handleExecute)
+  useEffect(() => { autoCompleteDataRef.current = autoCompleteData }, [autoCompleteData])
+  useEffect(() => { handleExecuteRef.current = handleExecute }, [handleExecute])
+
   // 注册自动补全
   const handleEditorMount = useCallback((editorInstance: editor.IStandaloneCodeEditor, monacoInstance: typeof import('monaco-editor')) => {
     editorRef.current = editorInstance
@@ -212,6 +277,8 @@ export default function QueryPanel() {
     completionProviderRef.current = monacoInstance.languages.registerCompletionItemProvider('sql', {
       triggerCharacters: [' ', '.', '`'],
       provideCompletionItems: (model, position) => {
+        // 通过 ref 获取最新数据，避免闭包捕获过期值
+        const data = autoCompleteDataRef.current
         const word = model.getWordUntilPosition(position)
         const range = {
           startLineNumber: position.lineNumber,
@@ -220,7 +287,7 @@ export default function QueryPanel() {
           endColumn: word.endColumn
         }
 
-        // 获取当前行前面的文本，判断上下文
+        // 当前行光标前文本（判断输入上下文）
         const textUntilPosition = model.getValueInRange({
           startLineNumber: position.lineNumber,
           startColumn: 1,
@@ -228,26 +295,73 @@ export default function QueryPanel() {
           endColumn: position.column
         })
 
+        // 完整 SQL 文本（解析表别名与表引用）
+        const fullSql = model.getValue()
+        const { aliasMap, tableCount, knownTables } = parseQueryContext(fullSql, data.tableColumnMap)
+
         const suggestions: languages.CompletionItem[] = []
 
-        // 检测是否在 表名. 后面（输入字段名）
+        // ===== 1. alias. 或 tableName. → 该表字段补全 =====
         const dotMatch = textUntilPosition.match(/(\w+)\.\s*$/)
         if (dotMatch) {
-          const tableName = dotMatch[1]
-          const cols = autoCompleteData.tableColumnMap[tableName] || []
-          cols.forEach((colName) => {
-            suggestions.push({
-              label: { label: colName, detail: ` ${tableName} 字段` },
-              kind: monacoInstance.languages.CompletionItemKind.Field,
-              insertText: colName,
-              range,
-              sortText: '0_' + colName
+          const resolvedTable = aliasMap[dotMatch[1].toLowerCase()]
+          if (resolvedTable) {
+            const cols = data.tableColumnMap[resolvedTable] || []
+            cols.forEach((colName) => {
+              suggestions.push({
+                label: { label: colName, detail: ` ${resolvedTable} 字段` },
+                kind: monacoInstance.languages.CompletionItemKind.Field,
+                insertText: colName,
+                range,
+                sortText: '0_' + colName
+              })
             })
-          })
+          }
           return { suggestions }
         }
 
-        // 关键字补全
+        // ===== 2. 上下文感知字段补全 =====
+        const needsColumn = /\b(SELECT|WHERE|SET|ON|BY|AND|OR|HAVING|VALUES|,)\s+`?[\w]*$/i.test(textUntilPosition)
+        if (needsColumn) {
+          if (tableCount === 1 && knownTables.length === 1) {
+            // 单表查询：优先提示该表全部字段
+            const singleTable = knownTables[0]
+            const cols = data.tableColumnMap[singleTable] || []
+            cols.forEach((colName) => {
+              suggestions.push({
+                label: { label: colName, detail: ` ${singleTable} 字段` },
+                kind: monacoInstance.languages.CompletionItemKind.Field,
+                insertText: colName,
+                range,
+                sortText: '0_' + colName
+              })
+            })
+          } else {
+            // 多表或无表：提示所有已知字段
+            data.allColumns.forEach((colName) => {
+              suggestions.push({
+                label: { label: colName, detail: ' 字段' },
+                kind: monacoInstance.languages.CompletionItemKind.Field,
+                insertText: colName,
+                range,
+                sortText: '1_' + colName
+              })
+            })
+          }
+        }
+
+        // ===== 3. 表名补全 =====
+        data.tableNames.forEach((tableName) => {
+          suggestions.push({
+            label: { label: tableName, detail: ' 表' },
+            kind: monacoInstance.languages.CompletionItemKind.Class,
+            insertText: tableName,
+            range,
+            sortText: '1_' + tableName
+          })
+        })
+
+        // ===== 4. 关键字补全 =====
         SQL_KEYWORDS.forEach((kw) => {
           suggestions.push({
             label: kw,
@@ -258,37 +372,15 @@ export default function QueryPanel() {
           })
         })
 
-        // 表名补全
-        autoCompleteData.tableNames.forEach((tableName) => {
-          suggestions.push({
-            label: { label: tableName, detail: ' 表' },
-            kind: monacoInstance.languages.CompletionItemKind.Class,
-            insertText: tableName,
-            range,
-            sortText: '1_' + tableName
-          })
-        })
-
-        // 字段名补全
-        autoCompleteData.allColumns.forEach((colName) => {
-          suggestions.push({
-            label: { label: colName, detail: ' 字段' },
-            kind: monacoInstance.languages.CompletionItemKind.Field,
-            insertText: colName,
-            range,
-            sortText: '1_' + colName
-          })
-        })
-
         return { suggestions }
       }
     })
 
     // Ctrl+Enter / Cmd+Enter 执行
     editorInstance.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.Enter, () => {
-      handleExecute()
+      handleExecuteRef.current()
     })
-  }, [autoCompleteData, handleExecute])
+  }, [])
 
   // 清理
   useEffect(() => {
