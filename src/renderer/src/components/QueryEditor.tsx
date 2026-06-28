@@ -21,6 +21,93 @@ import type { Tab, QueryResult } from '@shared/types'
 import QueryHistoryPanel from './QueryHistoryPanel'
 import ExplainPlanView from './ExplainPlanView'
 
+/**
+ * 智能 SQL 语句分割：
+ * 1. 跳过 -- 行注释、# 行注释、slash-star 块注释
+ * 2. 尊重字符串（单引号、双引号、反引号）内的分号
+ * 3. 按分号拆分为独立语句
+ */
+function splitSqlStatements(raw: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let i = 0
+  const len = raw.length
+
+  while (i < len) {
+    const ch = raw[i]
+
+    // -- 行注释：跳过到行尾
+    if (ch === '-' && i + 1 < len && raw[i + 1] === '-') {
+      while (i < len && raw[i] !== '\n') i++
+      current += ' '
+      continue
+    }
+
+    // # 行注释：跳过到行尾
+    if (ch === '#') {
+      while (i < len && raw[i] !== '\n') i++
+      current += ' '
+      continue
+    }
+
+    // /* */ 块注释：跳过到 */
+    if (ch === '/' && i + 1 < len && raw[i + 1] === '*') {
+      i += 2
+      while (i < len && !(raw[i] === '*' && i + 1 < len && raw[i + 1] === '/')) i++
+      i += 2 // skip */
+      current += ' '
+      continue
+    }
+
+    // 字符串（单引号、双引号、反引号）
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch
+      current += ch
+      i++
+      while (i < len) {
+        if (raw[i] === '\\') {
+          // 转义字符：保留两个字符
+          current += raw[i] + (raw[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        if (raw[i] === quote) {
+          // 检查双引号转义 ''、""、``
+          if (i + 1 < len && raw[i + 1] === quote) {
+            current += quote + quote
+            i += 2
+            continue
+          }
+          current += quote
+          i++
+          break
+        }
+        current += raw[i]
+        i++
+      }
+      continue
+    }
+
+    // 分号：语句分隔符
+    if (ch === ';') {
+      const stmt = current.trim()
+      if (stmt) statements.push(stmt)
+      current = ''
+      i++
+      continue
+    }
+
+    current += ch
+    i++
+  }
+
+  // 最后一条（可能没有分号结尾）
+  const last = current.trim()
+  if (last) statements.push(last)
+
+  return statements
+}
+
 interface Props {
   tab: Tab
 }
@@ -30,8 +117,11 @@ export default function QueryEditor({ tab }: Props) {
     tab.sql ?? (tab.database ? `-- 在 ${tab.database} 上执行查询\nSELECT * FROM \`\`\nLIMIT 100;` : '-- 输入 SQL 查询\n')
   )
   const [result, setResult] = useState<QueryResult | null>(null)
+  const [multiResults, setMultiResults] = useState<{ sql: string; result?: QueryResult; error?: string }[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [selectedSql, setSelectedSql] = useState<string | null>(null)
   const [showResult, setShowResult] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
@@ -51,44 +141,99 @@ export default function QueryEditor({ tab }: Props) {
 
   const config = connections.find((c) => c.id === tab.connectionId)
 
-  const handleExecute = useCallback(async () => {
+  const handleExecute = useCallback(async (overrideSql?: string) => {
     if (!config) return
 
-    // 获取选中的 SQL 或全部 SQL
-    let sqlToExecute = sql
-    if (editorRef.current) {
+    // 获取 SQL：优先使用传入参数，其次选中内容，最后全部
+    let rawSql = overrideSql ?? sql
+    if (!overrideSql && editorRef.current) {
       const editor = editorRef.current
       const selection = editor.getSelection()
       if (selection && !selection.isEmpty()) {
-        sqlToExecute = editor.getModel()?.getValueInRange(selection) ?? sql
+        rawSql = editor.getModel()?.getValueInRange(selection) ?? sql
       }
     }
 
-    if (!sqlToExecute.trim()) return
+    if (!rawSql.trim()) return
+
+    // 智能分割语句（剥离注释 + 按分号拆分）
+    const statements = splitSqlStatements(rawSql)
+    if (statements.length === 0) return
 
     setLoading(true)
     setError(null)
+    setResult(null)
+    setMultiResults(null)
     setShowResult(true)
 
-    const res = await window.api.db.query(config, sqlToExecute, tab.database)
-    setLoading(false)
+    if (statements.length === 1) {
+      // 单语句：直接执行
+      setLoadingProgress('')
+      const res = await window.api.db.query(config, statements[0], tab.database)
+      setLoading(false)
 
-    // 记录查询历史
-    addHistoryEntry({
-      sql: sqlToExecute,
-      connectionId: config.id,
-      database: tab.database,
-      duration: res.data?.duration ?? 0,
-      rowCount: res.data?.rows.length ?? res.data?.affectedRows ?? 0,
-      hasError: !res.success,
-      error: res.error
-    })
+      addHistoryEntry({
+        sql: statements[0],
+        connectionId: config.id,
+        database: tab.database,
+        duration: res.data?.duration ?? 0,
+        rowCount: res.data?.rows.length ?? res.data?.affectedRows ?? 0,
+        hasError: !res.success,
+        error: res.error
+      })
 
-    if (res.success && res.data) {
-      setResult(res.data)
+      if (res.success && res.data) {
+        setResult(res.data)
+      } else {
+        setError(res.error ?? '查询失败')
+        setResult(null)
+      }
     } else {
-      setError(res.error ?? '查询失败')
-      setResult(null)
+      // 多语句：逐条执行，聚合结果
+      const results: { sql: string; result?: QueryResult; error?: string }[] = []
+      let totalDuration = 0
+      let hasError = false
+
+      for (let i = 0; i < statements.length; i++) {
+        setLoadingProgress(`执行第 ${i + 1}/${statements.length} 条...`)
+        const stmt = statements[i]
+        const res = await window.api.db.query(config, stmt, tab.database)
+
+        if (res.success && res.data) {
+          totalDuration += res.data.duration
+          results.push({ sql: stmt, result: res.data })
+        } else {
+          hasError = true
+          results.push({ sql: stmt, error: res.error ?? '执行失败' })
+          // 遇到错误停止执行后续语句
+          break
+        }
+      }
+
+      setLoading(false)
+      setLoadingProgress('')
+      setMultiResults(results)
+
+      // 找到最后一个有结果的 SELECT 显示
+      const lastSelect = [...results].reverse().find(r => r.result && r.result.rows.length > 0)
+      if (lastSelect?.result) {
+        setResult(lastSelect.result)
+      }
+
+      if (hasError) {
+        const failed = results.find(r => r.error)
+        setError(failed?.error ?? '执行失败')
+      }
+
+      addHistoryEntry({
+        sql: rawSql,
+        connectionId: config.id,
+        database: tab.database,
+        duration: totalDuration,
+        rowCount: results.reduce((sum, r) => sum + (r.result?.rows.length ?? r.result?.affectedRows ?? 0), 0),
+        hasError,
+        error: results.find(r => r.error)?.error
+      })
     }
   }, [config, sql, tab.database, addHistoryEntry])
 
@@ -158,13 +303,36 @@ export default function QueryEditor({ tab }: Props) {
     return () => window.removeEventListener('keydown', handler)
   }, [handleSave])
 
-  // Monaco 编辑器内也拦截 Ctrl+S
+  // Monaco 编辑器内也拦截快捷键
   const handleEditorMount = useCallback((editor: any) => {
     editorRef.current = editor
+
+    // 监听选区变化，显示"执行选择"按钮
+    editor.onDidChangeCursorSelection(() => {
+      const sel = editor.getSelection()
+      if (sel && !sel.isEmpty()) {
+        const text = editor.getModel()?.getValueInRange(sel)
+        setSelectedSql(text?.trim() || null)
+      } else {
+        setSelectedSql(null)
+      }
+    })
+
     editor.addCommand(
       // @ts-ignore
-      2048 | 3, // Ctrl+Enter
+      2048 | 3, // Ctrl+Enter 执行全部/选中
       () => handleExecute()
+    )
+    editor.addCommand(
+      // @ts-ignore
+      2048 | 1024 | 3, // Ctrl+Shift+Enter 执行选中
+      () => {
+        const sel = editor.getSelection()
+        if (sel && !sel.isEmpty()) {
+          const text = editor.getModel()?.getValueInRange(sel)
+          if (text?.trim()) handleExecute(text.trim())
+        }
+      }
     )
     editor.addCommand(
       // @ts-ignore
@@ -242,7 +410,7 @@ export default function QueryEditor({ tab }: Props) {
       {/* 工具栏 */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-light bg-bg-secondary">
         <button
-          onClick={handleExecute}
+          onClick={() => handleExecute()}
           disabled={loading || !config}
           className="flex items-center gap-1.5 px-3 py-1 bg-accent hover:bg-accent-hover text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
           title="执行查询 (Ctrl+Enter)"
@@ -250,6 +418,17 @@ export default function QueryEditor({ tab }: Props) {
           {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
           执行
         </button>
+        {selectedSql && (
+          <button
+            onClick={() => handleExecute(selectedSql)}
+            disabled={loading || !config}
+            className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
+            title="执行选中的 SQL (Ctrl+Shift+Enter)"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            执行选择
+          </button>
+        )}
         <button
           onClick={() => setShowResult(!showResult)}
           className="flex items-center gap-1 px-2 py-1 text-text-secondary hover:text-text-primary text-xs transition-colors"
@@ -378,18 +557,52 @@ export default function QueryEditor({ tab }: Props) {
           {loading && (
             <div className="flex items-center justify-center h-full text-text-secondary text-sm gap-2">
               <Loader2 size={16} className="animate-spin text-accent" />
-              执行中...
+              {loadingProgress || '执行中...'}
             </div>
           )}
 
-          {!loading && error && (
+          {!loading && multiResults && multiResults.length > 1 && (
+            <div className="border-b border-border-light bg-bg-secondary">
+              <div className="px-3 py-1.5 text-xs text-text-secondary flex items-center gap-2">
+                <span className="font-medium">
+                  批量执行：{multiResults.filter(r => r.result).length}/{multiResults.length} 条成功
+                </span>
+                {error && <span className="text-red-400">第 {multiResults.findIndex(r => r.error) + 1} 条失败</span>}
+              </div>
+              <div className="max-h-32 overflow-y-auto">
+                {multiResults.map((r, idx) => (
+                  <div key={idx} className={`flex items-start gap-2 px-3 py-1 text-[11px] border-t border-border-light/30 ${
+                    r.error ? 'text-red-400' : 'text-text-muted'
+                  }`}>
+                    <span className="flex-shrink-0 w-5 text-right opacity-60">{idx + 1}</span>
+                    <span className={`flex-shrink-0 ${r.error ? 'text-red-400' : 'text-green-400'}`}>
+                      {r.error ? '✗' : '✓'}
+                    </span>
+                    <span className="font-mono truncate flex-1">
+                      {r.sql.split('\n')[0].slice(0, 100)}
+                    </span>
+                    {r.result && (
+                      <span className="flex-shrink-0 opacity-60">
+                        {r.result.rows.length > 0 ? `${r.result.rows.length} 行` :
+                          r.result.affectedRows > 0 ? `${r.result.affectedRows} 行受影响` : ''}
+                        {r.result.duration > 0 ? ` (${Math.round(r.result.duration)}ms)` : ''}
+                      </span>
+                    )}
+                    {r.error && <span className="flex-shrink-0 opacity-80 truncate max-w-48">{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!loading && error && !(multiResults && multiResults.length > 1) && (
             <div className="flex items-start gap-2 p-3 text-sm text-red-400">
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
               <pre className="whitespace-pre-wrap break-words font-mono text-xs">{error}</pre>
             </div>
           )}
 
-          {!loading && !error && result && (
+          {!loading && result && (
             <>
               {/* 结果统计栏 */}
               <div className="flex items-center gap-3 px-3 py-1 border-b border-border-light text-xs text-text-secondary">

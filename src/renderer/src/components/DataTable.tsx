@@ -25,7 +25,8 @@ import {
   Upload,
   ChevronDown,
   Copy,
-  ClipboardPaste
+  ClipboardPaste,
+  Search
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import type { Tab, ColumnInfo, QueryResult } from '@shared/types'
@@ -206,6 +207,9 @@ export default function DataTable({ tab }: Props) {
 
   // 底部字段编辑器（默认打开）
   const [showEditor, setShowEditor] = useState(true)
+
+  // 快捷搜索
+  const [quickSearch, setQuickSearch] = useState('')
   const [editorRowKey, setEditorRowKey] = useState<string | null>(null)
   const [editorColName, setEditorColName] = useState<string | null>(null)
 
@@ -1100,6 +1104,20 @@ export default function DataTable({ tab }: Props) {
   const startRow = totalRows === 0 ? 0 : page * PAGE_SIZE + 1
   const endRow = Math.min((page + 1) * PAGE_SIZE, totalRows)
 
+  // ==================== 快捷搜索过滤 ====================
+
+  const displayRows = useMemo(() => {
+    if (!quickSearch.trim()) return rows
+    const keyword = quickSearch.toLowerCase()
+    return rows.filter((row) =>
+      columns.some((col) => {
+        const val = row[col.name]
+        if (val === null || val === undefined) return false
+        return String(val).toLowerCase().includes(keyword)
+      })
+    )
+  }, [rows, quickSearch, columns])
+
   // ==================== 工具栏按钮样式 ====================
 
   const tbBtn = "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -1220,6 +1238,31 @@ export default function DataTable({ tab }: Props) {
             <span className="text-[10px]">{appliedConditions.length}</span>
           )}
         </button>
+
+        {/* 快捷搜索 */}
+        <div className="flex items-center gap-1 bg-bg-primary border border-border-light rounded px-1.5 py-0.5 focus-within:border-accent transition-colors">
+          <Search size={12} className="text-text-muted flex-shrink-0" />
+          <input
+            type="text"
+            value={quickSearch}
+            onChange={(e) => setQuickSearch(e.target.value)}
+            placeholder="快速搜索..."
+            className="w-24 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-muted/60"
+          />
+          {quickSearch && (
+            <>
+              <span className="text-[10px] text-text-muted flex-shrink-0">
+                {displayRows.length}/{rows.length}
+              </span>
+              <button
+                onClick={() => setQuickSearch('')}
+                className="text-text-muted hover:text-text-primary transition-colors flex-shrink-0"
+              >
+                <X size={11} />
+              </button>
+            </>
+          )}
+        </div>
 
         {/* 底部编辑器切换 */}
         <button
@@ -1441,7 +1484,7 @@ export default function DataTable({ tab }: Props) {
           <div ref={gridRef} className="h-full">
           <DataGrid
             columns={gridColumns}
-            rows={rows}
+            rows={displayRows}
             className="rdg-dark fill-grid"
             style={{ height: '100%' }}
             headerRowHeight={42}
@@ -1463,6 +1506,14 @@ export default function DataTable({ tab }: Props) {
             <button onClick={handleAddRow} className="flex items-center gap-1 px-3 py-1.5 bg-accent/20 text-accent rounded hover:bg-accent/30 transition-colors">
               <Plus size={14} /> 添加行
             </button>
+          </div>
+        )}
+
+        {!loading && !error && rows.length > 0 && displayRows.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-text-muted text-sm gap-2">
+            <Search size={24} className="opacity-30" />
+            <span>没有匹配「{quickSearch}」的行</span>
+            <button onClick={() => setQuickSearch('')} className="text-xs text-accent hover:underline">清除搜索</button>
           </div>
         )}
       </div>
