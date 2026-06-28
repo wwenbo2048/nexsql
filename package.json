@@ -1,6 +1,6 @@
 {
   "name": "nexsql",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "nexSql - A modern database management tool",
   "main": "./out/main/index.js",
   "author": "nexSql",
@@ -27,6 +27,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@types/node": "^20.11.24",
     "@types/react": "^18.2.61",
     "@types/react-dom": "^18.2.19",

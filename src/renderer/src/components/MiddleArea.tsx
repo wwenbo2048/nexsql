@@ -13,16 +13,7 @@ export default function MiddleArea() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
-  const renderContent = (tab: Tab | undefined) => {
-    if (!tab) {
-      return (
-        <div className="flex-1 flex flex-col items-center justify-center bg-bg-primary text-text-muted">
-          <Database size={48} className="opacity-30 mb-3" />
-          <p className="text-sm">选择一个连接开始</p>
-        </div>
-      )
-    }
-
+  const renderContent = (tab: Tab) => {
     switch (tab.type) {
       case 'browser':
         return <MiddlePanel />
@@ -64,7 +55,26 @@ export default function MiddleArea() {
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full bg-bg-primary">
       <TabBar />
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{renderContent(activeTab)}</div>
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {tabs.length === 0 || !activeTab ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-bg-primary text-text-muted">
+            <Database size={48} className="opacity-30 mb-3" />
+            <p className="text-sm">选择一个连接开始</p>
+            <p className="text-xs mt-1">双击表名查看数据，或右键新建查询</p>
+          </div>
+        ) : (
+          tabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={`flex-1 min-h-0 flex flex-col overflow-hidden ${
+                tab.id === activeTabId ? '' : 'hidden'
+              }`}
+            >
+              {renderContent(tab)}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   )
 }

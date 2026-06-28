@@ -19,6 +19,13 @@ import type {
 // ==================== API 接口定义 ====================
 
 const api = {
+  // 应用信息
+  appVersion: (() => {
+    const arg = process.argv.find(a => a.startsWith('--app-version='))
+    return arg ? arg.split('=')[1] : 'dev'
+  })(),
+  platform: process.platform,
+
   // 配置管理
   config: {
     getConnections: (): Promise<ConnectionConfig[]> =>

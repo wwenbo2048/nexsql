@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
   Plug,
   Plug2,
@@ -44,6 +44,8 @@ interface MenuGroup {
 export default function MenuBar() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const isMac = useMemo(() => window.api?.platform === 'darwin', [])
+  const appVersion = useMemo(() => window.api?.appVersion ?? '', [])
 
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
@@ -250,14 +252,15 @@ export default function MenuBar() {
 
   // ==================== 帮助菜单 ====================
   const helpItems: MenuItem[] = [
-    {
+    // macOS 原生菜单已有“关于”，自定义菜单仅在非 macOS 显示
+    ...(!isMac ? [{
       label: '关于 nexSql',
       icon: <Info size={13} />,
       onClick: () => {
         window.dispatchEvent(new CustomEvent('nexsql-about'))
         setOpenMenu(null)
       }
-    },
+    } as MenuItem] : []),
     {
       label: 'GitHub',
       icon: <Github size={13} />,
@@ -267,7 +270,8 @@ export default function MenuBar() {
 
   const menuGroups: MenuGroup[] = [
     { label: '文件', items: fileItems },
-    { label: '视图', items: viewItems },
+    // macOS: 视图菜单隐藏（功能通过快捷键保留），窗口菜单由原生菜单处理
+    ...(!isMac ? [{ label: '视图', items: viewItems }] : []),
     { label: '对象', items: objectItems },
     { label: '工具', items: toolItems },
     { label: '帮助', items: helpItems },
@@ -275,10 +279,16 @@ export default function MenuBar() {
 
   return (
     <div ref={menuRef} className="flex items-center h-full titlebar-no-drag">
-      {/* Logo */}
+      {/* macOS traffic lights 留白 */}
+      {isMac && <div className="w-[72px] flex-shrink-0" />}
+
+      {/* Logo + 版本号 */}
       <div className="flex items-center gap-1.5 px-3 select-none">
         <DatabaseIcon size={14} className="text-accent" />
         <span className="text-xs font-bold text-text-primary tracking-tight">nexSql</span>
+        {appVersion && (
+          <span className="text-[9px] text-text-muted font-normal mt-px">v{appVersion}</span>
+        )}
       </div>
 
       {/* 菜单组 */}

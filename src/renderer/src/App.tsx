@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
+import { useBrowserStore } from '@stores/browser'
 import Sidebar from '@components/Sidebar'
 import MiddleArea from '@components/MiddleArea'
 import TableDetailPanel from '@components/TableDetailPanel'
@@ -32,6 +33,26 @@ export default function App() {
       window.removeEventListener('nexsql-toggle-sidebar', toggleSidebar)
       window.removeEventListener('nexsql-toggle-middle', toggleRightPanel)
     }
+  }, [])
+
+  // 视图菜单快捷键（macOS 隐藏视图菜单后保留功能）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey
+      if (!meta) return
+      if (e.key === '1') {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('nexsql-toggle-sidebar'))
+      } else if (e.key === '2') {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('nexsql-toggle-middle'))
+      } else if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault()
+        useBrowserStore.getState().refreshList()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   useEffect(() => {
