@@ -1,5 +1,6 @@
 import { ipcMain, type BrowserWindow, dialog } from 'electron'
 import { writeFile, readFile } from 'fs/promises'
+import { readFileSync } from 'fs'
 import Store from 'electron-store'
 import { uuidv4 } from './uuid'
 import { encryptPassword, decryptPassword } from './crypto'
@@ -43,6 +44,46 @@ function getFullErrorMessage(err: unknown): string {
     return msg
   }
   return String(err)
+}
+
+/** 字符串感知的 SQL 语句分割（避免字符串内的分号截断） */
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = []
+  let current = ''; let inSingle = false; let inDouble = false; let inBacktick = false; let inLineComment = false; let inBlockComment = false
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]; const next = sql[i + 1]
+    if (inLineComment) { if (ch === '\n') { inLineComment = false; current += ' ' } continue }
+    if (inBlockComment) { if (ch === '*' && next === '/') { inBlockComment = false; i++ } continue }
+    if (inSingle) {
+      current += ch
+      if (ch === '\\' && next) { current += next; i++; continue }
+      if (ch === "'" && next === "'") { current += next; i++; continue }
+      if (ch === "'") inSingle = false
+      continue
+    }
+    if (inDouble) {
+      current += ch
+      if (ch === '\\' && next) { current += next; i++; continue }
+      if (ch === '"') inDouble = false
+      continue
+    }
+    if (inBacktick) {
+      current += ch
+      if (ch === '`' && next === '`') { current += next; i++; continue }
+      if (ch === '`') inBacktick = false
+      continue
+    }
+    if (ch === '-' && next === '-') { inLineComment = true; i++; continue }
+    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue }
+    if (ch === "'") { inSingle = true; current += ch; continue }
+    if (ch === '"') { inDouble = true; current += ch; continue }
+    if (ch === '`') { inBacktick = true; current += ch; continue }
+    if (ch === ';') { const stmt = current.trim(); if (stmt) statements.push(stmt); current = ''; continue }
+    current += ch
+  }
+  const last = current.trim()
+  if (last) statements.push(last)
+  return statements
 }
 
 export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
@@ -337,14 +378,15 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     'db:dumpDatabase',
-    async (event, config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string) => {
+    async (event, config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string, filePath?: string) => {
       try {
         const sql = await db.dumpDatabase(config, database, options,
           (p) => {
             if (cancelFlags.has(operationId)) return
             event.sender.send('db:backupProgress', { operationId, ...p })
           },
-          () => cancelFlags.has(operationId)
+          () => cancelFlags.has(operationId),
+          filePath
         )
         if (cancelFlags.has(operationId)) {
           cancelFlags.delete(operationId)
@@ -365,13 +407,18 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     'db:restoreDatabase',
-    async (event, config: ConnectionConfig, database: string, sql: string, operationId: string) => {
+    async (event, config: ConnectionConfig, database: string, sqlOrPath: string, operationId: string) => {
       try {
         const pool = await db.getPool(config)
         const conn = await pool.getConnection()
         try {
           await conn.changeUser({ database })
-          const statements = sql.split(';').map((s) => s.trim()).filter((s) => s && !s.startsWith('--'))
+          // 支持文件路径或 SQL 内容：如果以 .sql 结尾且不含分号，视为文件路径
+          let sqlContent = sqlOrPath
+          if (sqlOrPath.endsWith('.sql') && !sqlOrPath.includes(';')) {
+            sqlContent = readFileSync(sqlOrPath, 'utf-8')
+          }
+          const statements = splitSqlStatements(sqlContent)
           let executed = 0
           for (let i = 0; i < statements.length; i++) {
             if (cancelFlags.has(operationId)) {
@@ -380,7 +427,13 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
             }
             const stmt = statements[i]
             if (stmt.length > 0) {
-              await conn.query(stmt)
+              try {
+                await conn.query(stmt)
+              } catch (queryErr: any) {
+                const preview = stmt.length > 200 ? stmt.slice(0, 200) + '...' : stmt
+                const msg = queryErr?.message || String(queryErr)
+                throw new Error(`语句 ${i + 1}/${statements.length} 执行失败:\n${msg}\n\nSQL: ${preview}`)
+              }
               executed++
             }
             if ((i + 1) % 10 === 0 || i === statements.length - 1) {

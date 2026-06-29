@@ -1,4 +1,5 @@
 import mysql, { type Pool, type RowDataPacket, type FieldPacket, type PoolOptions } from 'mysql2/promise'
+import { createWriteStream } from 'fs'
 import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, ViewInfo, RoutineInfo, EventInfo, QueryResult } from '../../shared/types'
 import { createTunnel, closeTunnel, closeAllTunnels, needsTunnel } from './ssh-tunnel'
 
@@ -701,7 +702,8 @@ export async function dumpDatabase(
   database: string,
   options: DumpOptions,
   onProgress?: (p: DumpProgress) => void,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  filePath?: string
 ): Promise<string> {
   const pool = await getPool(config)
   const conn = await pool.getConnection()
@@ -718,35 +720,48 @@ export async function dumpDatabase(
       tableList = rows.map((r) => r.TABLE_NAME as string)
     }
 
-    let sql = `-- nexSQL 数据库备份\n`
-    sql += `-- 数据库: ${database}\n`
-    sql += `-- 服务器: ${config.host}:${config.port}\n`
-    sql += `-- 生成时间: ${new Date().toISOString()}\n\n`
-    sql += `SET NAMES utf8mb4;\n`
-    sql += `SET FOREIGN_KEY_CHECKS = 0;\n\n`
+    // 流式写入：避免大文件通过 IPC 传输导致截断
+    let writeStream: ReturnType<typeof createWriteStream> | null = null
+    if (filePath) {
+      writeStream = createWriteStream(filePath, { encoding: 'utf-8' })
+    }
+
+    // 收集或写入 SQL
+    let sql = ''
+    const emit = (chunk: string) => {
+      if (writeStream) writeStream.write(chunk)
+      else sql += chunk
+    }
+
+    emit(`-- nexSQL 数据库备份\n`)
+    emit(`-- 数据库: ${database}\n`)
+    emit(`-- 服务器: ${config.host}:${config.port}\n`)
+    emit(`-- 生成时间: ${new Date().toISOString()}\n\n`)
+    emit(`SET NAMES utf8mb4;\n`)
+    emit(`SET FOREIGN_KEY_CHECKS = 0;\n\n`)
 
     for (let i = 0; i < tableList.length; i++) {
       if (shouldCancel?.()) throw new Error('已取消')
       const table = tableList[i]
       onProgress?.({ current: table, index: i + 1, total: tableList.length })
 
-      sql += `-- -------------------------------------------\n`
-      sql += `-- 表: ${table}\n`
-      sql += `-- -------------------------------------------\n\n`
+      emit(`-- -------------------------------------------\n`)
+      emit(`-- 表: ${table}\n`)
+      emit(`-- -------------------------------------------\n\n`)
 
       if (options.includeStructure) {
-        sql += `DROP TABLE IF EXISTS \`${table}\`;\n`
+        emit(`DROP TABLE IF EXISTS \`${table}\`;\n`)
         const [createRows] = await conn.query<RowDataPacket[]>(`SHOW CREATE TABLE \`${table}\``)
         if (createRows.length > 0) {
-          sql += (createRows[0] as Record<string, unknown>)['Create Table'] as string
-          sql += ';\n\n'
+          emit((createRows[0] as Record<string, unknown>)['Create Table'] as string)
+          emit(';\n\n')
         }
       }
 
       if (options.includeData) {
         const [dataRows] = await conn.query<RowDataPacket[]>(`SELECT * FROM \`${table}\``)
         if (dataRows.length > 0) {
-          sql += `-- 数据: ${dataRows.length} 行\n`
+          emit(`-- 数据: ${dataRows.length} 行\n`)
           const cols = Object.keys(dataRows[0])
           const colNames = cols.map((c) => `\`${c}\``).join(', ')
 
@@ -761,17 +776,28 @@ export async function dumpDatabase(
                 if (typeof v === 'number') return String(v)
                 if (typeof v === 'boolean') return v ? '1' : '0'
                 if (v instanceof Date) return `'${v.toISOString().slice(0, 19).replace('T', ' ')}'`
-                return `'${String(v).replace(/'/g, "''")}'`
+                if (Buffer.isBuffer(v)) return `X'${v.toString('hex')}'`
+                if (typeof v === 'object') return `'${JSON.stringify(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
+                return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
               })
               return `(${vals.join(', ')})`
             })
-            sql += `INSERT INTO \`${table}\` (${colNames}) VALUES\n${values.join(',\n')};\n\n`
+            emit(`INSERT INTO \`${table}\` (${colNames}) VALUES\n${values.join(',\n')};\n\n`)
           }
         }
       }
     }
 
-    sql += `SET FOREIGN_KEY_CHECKS = 1;\n`
+    emit(`SET FOREIGN_KEY_CHECKS = 1;\n`)
+
+    if (writeStream) {
+      // 等待写入流完成
+      await new Promise<void>((resolve, reject) => {
+        writeStream!.end(() => resolve())
+        writeStream!.on('error', reject)
+      })
+      return filePath!
+    }
     return sql
   } finally {
     conn.release()

@@ -76,10 +76,10 @@ const api = {
       ipcRenderer.invoke('db:getERRelations', config, database),
     getERTableColumns: (config: ConnectionConfig, database: string): Promise<IpcResponse> =>
       ipcRenderer.invoke('db:getERTableColumns', config, database),
-    dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string): Promise<IpcResponse<string>> =>
-      ipcRenderer.invoke('db:dumpDatabase', config, database, options, operationId),
-    restoreDatabase: (config: ConnectionConfig, database: string, sql: string, operationId: string): Promise<IpcResponse<{ executed: number }>> =>
-      ipcRenderer.invoke('db:restoreDatabase', config, database, sql, operationId),
+    dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string, filePath?: string): Promise<IpcResponse<string>> =>
+      ipcRenderer.invoke('db:dumpDatabase', config, database, options, operationId, filePath),
+    restoreDatabase: (config: ConnectionConfig, database: string, sqlOrPath: string, operationId: string): Promise<IpcResponse<{ executed: number }>> =>
+      ipcRenderer.invoke('db:restoreDatabase', config, database, sqlOrPath, operationId),
     cancelOperation: (operationId: string): Promise<void> =>
       ipcRenderer.invoke('db:cancelOperation', operationId),
     onBackupProgress: (callback: (data: { operationId: string; current: string; index: number; total: number }) => void) => {

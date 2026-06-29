@@ -134,7 +134,10 @@ export default function MenuBar() {
           items: [
             { label: '导出为 CSV', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'csv' } })) },
             { label: '导出为 JSON', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'json' } })) },
-            { label: '导出为 SQL', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'sql' } })) },
+            { label: '', separator: true },
+            { label: '导出 SQL（数据+结构）', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'sql', mode: 'all' } })) },
+            { label: '导出 SQL（仅结构）', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'sql', mode: 'structure' } })) },
+            { label: '导出 SQL（仅数据）', onClick: () => window.dispatchEvent(new CustomEvent('nexsql-export', { detail: { format: 'sql', mode: 'data' } })) },
           ]
         })
         setOpenMenu(null)

@@ -208,10 +208,11 @@ export default function ConnectionTree() {
   // ==================== 数据库备份 ====================
 
   const handleBackupDatabase = useCallback(
-    async (config: ConnectionConfig, dbName: string) => {
+    async (config: ConnectionConfig, dbName: string, mode: 'all' | 'structure' | 'data' = 'all') => {
+      const modeSuffix = mode === 'structure' ? '_structure' : mode === 'data' ? '_data' : ''
       // 先选择保存位置
       const saveRes = await window.api.file.savePathDialog(
-        `${dbName}_backup_${new Date().toISOString().slice(0, 10)}.sql`,
+        `${dbName}${modeSuffix}_backup_${new Date().toISOString().slice(0, 10)}.sql`,
         'sql'
       )
       if (!saveRes.success || !saveRes.data?.saved || !saveRes.data.path) return
@@ -219,7 +220,8 @@ export default function ConnectionTree() {
       const savePath = saveRes.data.path
       const opId = `backup_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
       operationIdRef.current = opId
-      setOpProgress({ type: 'backup', dbName, current: 0, total: 100, label: '正在获取表列表...', operationId: opId })
+      const modeLabel = mode === 'structure' ? '仅结构' : mode === 'data' ? '仅数据' : '数据+结构'
+      setOpProgress({ type: 'backup', dbName, current: 0, total: 100, label: `正在获取表列表... (${modeLabel})`, operationId: opId })
 
       const unsub = window.api.db.onBackupProgress((data) => {
         if (data.operationId !== opId) return
@@ -229,24 +231,17 @@ export default function ConnectionTree() {
       try {
         const res = await window.api.db.dumpDatabase(config, dbName, {
           tables: [],
-          includeData: true,
-          includeStructure: true
-        }, opId)
+          includeData: mode === 'all' || mode === 'data',
+          includeStructure: mode === 'all' || mode === 'structure'
+        }, opId, savePath)
         unsub()
-        if (!res.success || !res.data) {
+        if (!res.success) {
           setOpProgress(null)
           if (res.error !== '已取消') alert(`备份失败: ${res.error}`)
           return
         }
-        setOpProgress((prev) => prev ? { ...prev, label: '写入文件...' } : null)
-        // 写入已选择的路径
-        const writeRes = await window.api.file.writeToFile(savePath, res.data)
         setOpProgress(null)
-        if (writeRes.success) {
-          alert(`数据库备份成功！\n保存至: ${savePath}`)
-        } else {
-          alert(`备份文件写入失败: ${writeRes.error}`)
-        }
+        alert(`数据库备份成功！(${modeLabel})\n保存至: ${savePath}`)
       } catch (err) {
         unsub()
         setOpProgress(null)
@@ -274,7 +269,8 @@ export default function ConnectionTree() {
           setOpProgress({ type: 'restore', dbName, current: data.current, total: data.total, label: `正在执行语句 ${data.current}/${data.total}`, operationId: opId })
         })
 
-        const res = await window.api.db.restoreDatabase(config, dbName, openRes.data.content, opId)
+        // 直接传文件路径，主进程读取文件（避免大文件通过 IPC 传输截断）
+        const res = await window.api.db.restoreDatabase(config, dbName, openRes.data.path!, opId)
         unsub()
         setOpProgress(null)
         if (res.success) {
@@ -483,7 +479,9 @@ export default function ConnectionTree() {
                         items: [
                           { label: '新建查询', onClick: () => handleNewQuery(config, db.name) },
                           { label: '', separator: true },
-                          { label: '备份数据库', onClick: () => handleBackupDatabase(config, db.name) },
+                          { label: '备份（数据+结构）', onClick: () => handleBackupDatabase(config, db.name, 'all') },
+                          { label: '备份（仅结构）', onClick: () => handleBackupDatabase(config, db.name, 'structure') },
+                          { label: '备份（仅数据）', onClick: () => handleBackupDatabase(config, db.name, 'data') },
                           { label: '恢复数据库', onClick: () => handleRestoreDatabase(config, db.name) },
                           { label: '', separator: true },
                           { label: '复制数据库名', onClick: () => navigator.clipboard.writeText(db.name) },

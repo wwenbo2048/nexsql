@@ -76,9 +76,14 @@ export default function MiddlePanel() {
 
   const [error, setError] = useState<string | null>(null)
   const [renameState, setRenameState] = useState<{ oldName: string; newName: string } | null>(null)
+  // 多选状态（Ctrl+点击/Shift+点击）
+  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set())
 
   const config = connections.find((c) => c.id === selectedConnectionId)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
+
+  // 切换数据库/分类/连接时清空多选
+  useEffect(() => { setSelectedTables(new Set()) }, [selectedDatabase, selectedCategory, selectedConnectionId])
 
   const loadData = useCallback(async () => {
     if (!config || !selectedDatabase) return
@@ -196,7 +201,38 @@ export default function MiddlePanel() {
   }, [config, selectedDatabase, selectedTable])
 
   const handleDelete = useCallback(async () => {
-    if (!config || !selectedDatabase || !selectedTable) return
+    if (!config || !selectedDatabase) return
+    // 多选批量删除
+    if (selectedTables.size > 1) {
+      const count = selectedTables.size
+      if (!confirm(`确定删除 ${count} 个${CATEGORY_LABELS[selectedCategory]}吗？此操作不可恢复！`)) return
+      let keyword = 'TABLE'
+      if (selectedCategory === 'views') keyword = 'VIEW'
+      else if (selectedCategory === 'functions') keyword = 'FUNCTION'
+      else if (selectedCategory === 'events') keyword = 'EVENT'
+      const names = Array.from(selectedTables)
+      const errors: string[] = []
+      // 关闭外键检查，避免互相引用导致删除失败
+      if (keyword === 'TABLE') {
+        await window.api.db.query(config, 'SET FOREIGN_KEY_CHECKS = 0', selectedDatabase)
+      }
+      for (const name of names) {
+        const res = await window.api.db.query(config, `DROP ${keyword} IF EXISTS \`${name}\``, selectedDatabase)
+        if (!res.success) errors.push(`${name}: ${res.error}`)
+      }
+      if (keyword === 'TABLE') {
+        await window.api.db.query(config, 'SET FOREIGN_KEY_CHECKS = 1', selectedDatabase)
+      }
+      setSelectedTables(new Set())
+      selectTable(null)
+      refreshList()
+      if (errors.length > 0) {
+        alert(`部分删除失败:\n${errors.join('\n')}`)
+      }
+      return
+    }
+    // 单选删除
+    if (!selectedTable) return
     const catLabel = CATEGORY_LABELS[selectedCategory]
     if (!confirm(`确定删除${catLabel} "${selectedTable}" 吗？此操作不可恢复！`)) return
     let sql = ''
@@ -212,7 +248,7 @@ export default function MiddlePanel() {
     } else {
       alert(`删除失败: ${res.error}`)
     }
-  }, [config, selectedDatabase, selectedTable, selectedCategory, selectTable, refreshList])
+  }, [config, selectedDatabase, selectedTable, selectedCategory, selectedTables, selectTable, refreshList])
 
   const openTableData = useTabStore((s) => s.openTableData)
   const openTableDesign = useTabStore((s) => s.openTableDesign)
@@ -241,6 +277,7 @@ export default function MiddlePanel() {
   // 处理分类点击：ER 图直接开新 Tab，其他切换列表
   const handleCategoryClick = useCallback((key: DbCategory) => {
     if (!selectedConnectionId || !selectedDatabase) return
+    setSelectedTables(new Set())
     if (key === 'er') {
       openErDiagram(selectedConnectionId, selectedDatabase)
       return
@@ -427,8 +464,19 @@ export default function MiddlePanel() {
         onClick: () => handleDropTable(tableName)
       }
     ]
+    // 多选时添加批量删除选项
+    if (selectedTables.size > 1) {
+      items.splice(items.length - 1, 0,
+        {
+          label: `批量删除 ${selectedTables.size} 个表`,
+          danger: true,
+          onClick: () => handleDelete()
+        },
+        { separator: true, label: '' }
+      )
+    }
     setContextMenu({ x: e.clientX, y: e.clientY, items })
-  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, setContextMenu, setCompareSource, selectedConnectionId, selectedDatabase, openTableData, openTableDesign])
+  }, [selectTable, handleCopyTable, handleRenameTable, handleTruncateTable, handleOptimizeTable, handleExportSQL, handleDropTable, handleDelete, selectedTables, setContextMenu, setCompareSource, selectedConnectionId, selectedDatabase, openTableData, openTableDesign])
 
   const tbBtn = "flex items-center gap-1 px-1.5 py-1 rounded text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-bg-hover text-text-secondary hover:text-text-primary"
 
@@ -558,8 +606,14 @@ export default function MiddlePanel() {
         <button onClick={handleEdit} className={tbBtn} title="编辑" disabled={!selectedTable}>
           <Pencil size={14} />
         </button>
-        <button onClick={handleDelete} className={`${tbBtn} hover:text-red-400`} title="删除" disabled={!selectedTable}>
+        <button
+          onClick={handleDelete}
+          className={`${tbBtn} hover:text-red-400`}
+          title={selectedTables.size > 1 ? `删除 ${selectedTables.size} 个` : '删除'}
+          disabled={!selectedTable && selectedTables.size === 0}
+        >
           <Trash2 size={14} />
+          {selectedTables.size > 1 && <span className="text-[10px] text-red-400">{selectedTables.size}</span>}
         </button>
 
         <div className="ml-auto flex items-center gap-1">
@@ -599,7 +653,36 @@ export default function MiddlePanel() {
                 tables={tables}
                 filteredTables={search ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())) : tables}
                 selectedTable={selectedTable}
-                onSelect={(name) => selectTable(name, 'info')}
+                selectedTables={selectedTables}
+                onSelect={(name, e) => {
+                  const isCtrl = e.ctrlKey || e.metaKey
+                  const isShift = e.shiftKey
+                  if (isCtrl) {
+                    // Ctrl+点击：切换选中状态
+                    setSelectedTables((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(name)) next.delete(name)
+                      else next.add(name)
+                      return next
+                    })
+                    selectTable(name, 'info')
+                  } else if (isShift && selectedTable) {
+                    // Shift+点击：范围选择
+                    const list = search ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())) : tables
+                    const anchorIdx = list.findIndex((t) => t.name === selectedTable)
+                    const currentIdx = list.findIndex((t) => t.name === name)
+                    if (anchorIdx !== -1 && currentIdx !== -1) {
+                      const start = Math.min(anchorIdx, currentIdx)
+                      const end = Math.max(anchorIdx, currentIdx)
+                      const rangeNames = list.slice(start, end + 1).map((t) => t.name)
+                      setSelectedTables(new Set(rangeNames))
+                    }
+                  } else {
+                    // 普通点击：单选，清空多选
+                    setSelectedTables(new Set())
+                    selectTable(name, 'info')
+                  }
+                }}
                 onDoubleClick={(name) => {
                   if (selectedConnectionId && selectedDatabase) {
                     openTableData(selectedConnectionId, selectedDatabase, name)
@@ -694,11 +777,12 @@ export default function MiddlePanel() {
 type TableSortKey = 'name' | 'rows' | 'dataSize'
 type SortDir = 'asc' | 'desc'
 
-function TableList({ tables, filteredTables, selectedTable, onSelect, onDoubleClick, onContextMenu }: {
+function TableList({ tables, filteredTables, selectedTable, selectedTables, onSelect, onDoubleClick, onContextMenu }: {
   tables: TableInfo[]
   filteredTables: TableInfo[]
   selectedTable: string | null
-  onSelect: (name: string) => void
+  selectedTables: Set<string>
+  onSelect: (name: string, e: React.MouseEvent) => void
   onDoubleClick: (name: string) => void
   onContextMenu: (e: React.MouseEvent, tableName: string) => void
 }) {
@@ -749,16 +833,21 @@ function TableList({ tables, filteredTables, selectedTable, onSelect, onDoubleCl
           大小 {sortIcon('dataSize')}
         </button>
       </div>
-      {sortedTables.map((table) => (
+      {sortedTables.map((table) => {
+        const isSelected = selectedTable === table.name
+        const isMultiSelected = selectedTables.has(table.name)
+        return (
         <div
           key={table.name}
-          onClick={() => onSelect(table.name)}
+          onClick={(e) => onSelect(table.name, e)}
           onDoubleClick={() => onDoubleClick(table.name)}
           onContextMenu={(e) => onContextMenu(e, table.name)}
           className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 transition-colors group ${
-            selectedTable === table.name
+            isSelected
               ? 'bg-accent/20 border-l-2 border-l-accent'
-              : 'hover:bg-bg-hover border-l-2 border-l-transparent'
+              : isMultiSelected
+                ? 'bg-accent/10 border-l-2 border-l-accent/60'
+                : 'hover:bg-bg-hover border-l-2 border-l-transparent'
           }`}
         >
           <TableIcon size={13} className="text-blue-400 flex-shrink-0" />
@@ -782,7 +871,7 @@ function TableList({ tables, filteredTables, selectedTable, onSelect, onDoubleCl
             <span className="w-16 text-right" title="数据大小">{formatBytes(table.dataSize ?? 0)}</span>
           </div>
         </div>
-      ))}
+      )})}
     </>
   )
 }

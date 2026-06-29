@@ -58,11 +58,51 @@ function toHexPreview(val: unknown, maxBytes: number = 16): string {
 interface RowData { _row_key: string; _row_num: number; [key: string]: unknown }
 let rowKeyCounter = 0
 function genRowKey(): string { rowKeyCounter++; return `r${Date.now()}_${rowKeyCounter}` }
+
+// 字符串感知的 SQL 语句分割（避免字符串内的分号截断）
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = []
+  let current = ''; let inSingle = false; let inDouble = false; let inBacktick = false; let inLineComment = false; let inBlockComment = false
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]; const next = sql[i + 1]
+    if (inLineComment) { if (ch === '\n') { inLineComment = false; current += ' ' } continue }
+    if (inBlockComment) { if (ch === '*' && next === '/') { inBlockComment = false; i++ } continue }
+    if (inSingle) {
+      current += ch
+      if (ch === '\\' && next) { current += next; i++; continue }
+      if (ch === "'" && next === "'") { current += next; i++; continue }
+      if (ch === "'") inSingle = false
+      continue
+    }
+    if (inDouble) {
+      current += ch
+      if (ch === '\\' && next) { current += next; i++; continue }
+      if (ch === '"') inDouble = false
+      continue
+    }
+    if (inBacktick) {
+      current += ch
+      if (ch === '`' && next === '`') { current += next; i++; continue }
+      if (ch === '`') inBacktick = false
+      continue
+    }
+    if (ch === '-' && next === '-') { inLineComment = true; i++; continue }
+    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue }
+    if (ch === "'") { inSingle = true; current += ch; continue }
+    if (ch === '"') { inDouble = true; current += ch; continue }
+    if (ch === '`') { inBacktick = true; current += ch; continue }
+    if (ch === ';') { const stmt = current.trim(); if (stmt) statements.push(stmt); current = ''; continue }
+    current += ch
+  }
+  const last = current.trim()
+  if (last) statements.push(last)
+  return statements
+}
 function escapeVal(val: unknown): string {
   if (val === null || val === undefined || val === '') return 'NULL'
   const str = String(val)
   if (/^-?\d+(\.\d+)?$/.test(str)) return str
-  return `'${str.replace(/'/g, "\\'")}'`
+  return `'${str.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 }
 // 从 INSERT SQL 中提取 VALUES 括号内容（支持括号平衡，避免字符串内的括号截断）
 function extractValuesFromInsert(sql: string): string[] {
@@ -315,25 +355,10 @@ export default function DataTable({ tab }: Props) {
   const handleCellEdited = useCallback((cell: Item, newValue: EditableGridCell) => {
     const [col, rowIdx] = cell
     if (col < 0 || col >= columns.length) return
-    const newVal = (newValue as { data: unknown }).data
-    // 检查是否有范围选区，如果有则应用到所有选中单元格
-    const sel = gridSelectionRef.current
-    const range = sel.current?.range
-    if (range && (range.width > 1 || range.height > 1)) {
-      for (let r = range.y; r < range.y + range.height; r++) {
-        const row = displayRowsRef.current[r]
-        if (!row) continue
-        for (let c = range.x; c < range.x + range.width; c++) {
-          if (c < 0 || c >= columns.length) continue
-          setCellValue(row._row_key, columns[c].name, newVal)
-        }
-      }
-      return
-    }
-    // 单格编辑
     const colName = columns[col].name
     const row = displayRowsRef.current[rowIdx]
     if (!row) return
+    const newVal = (newValue as { data: unknown }).data
     setCellValue(row._row_key, colName, newVal)
   }, [columns])
 
@@ -449,33 +474,40 @@ export default function DataTable({ tab }: Props) {
   }
 
   // ==================== 导出 ====================
-  const handleExport = useCallback(async (format: 'csv' | 'json' | 'sql') => {
+  const handleExport = useCallback(async (format: 'csv' | 'json' | 'sql', mode: 'all' | 'structure' | 'data' = 'all') => {
     setShowExportMenu(false)
     if (!config || !tab.database || !tab.table) return
     try {
-      setProgress({ current: 0, total: 100, label: '查询数据...' })
-      let sql = `SELECT * FROM \`${tab.table}\``
-      if (appliedConditions.length > 0) {
-        const whereParts: string[] = []
-        appliedConditions.forEach((cond, i) => {
-          let part = ''
-          if (cond.op === 'IS NULL') part = `\`${cond.column}\` IS NULL`
-          else if (cond.op === 'IS NOT NULL') part = `\`${cond.column}\` IS NOT NULL`
-          else if (cond.op === 'LIKE' || cond.op === 'NOT LIKE') part = `\`${cond.column}\` ${cond.op} '%${cond.value.replace(/'/g, "\\'")}%'`
-          else part = `\`${cond.column}\` ${cond.op} ${escapeVal(cond.value)}`
-          whereParts.push(i === 0 ? part : `${cond.logic} ${part}`)
-        })
-        sql += ` WHERE ${whereParts.join(' ')}`
+      let dataRows: Record<string, unknown>[] = []
+      let cols: string[] = []
+      // 仅结构模式不需要查询数据
+      if (mode !== 'structure') {
+        setProgress({ current: 0, total: 100, label: '查询数据...' })
+        let sql = `SELECT * FROM \`${tab.table}\``
+        if (appliedConditions.length > 0) {
+          const whereParts: string[] = []
+          appliedConditions.forEach((cond, i) => {
+            let part = ''
+            if (cond.op === 'IS NULL') part = `\`${cond.column}\` IS NULL`
+            else if (cond.op === 'IS NOT NULL') part = `\`${cond.column}\` IS NOT NULL`
+            else if (cond.op === 'LIKE' || cond.op === 'NOT LIKE') part = `\`${cond.column}\` ${cond.op} '%${cond.value.replace(/'/g, "\\'")}%\'`
+            else part = `\`${cond.column}\` ${cond.op} ${escapeVal(cond.value)}`
+            whereParts.push(i === 0 ? part : `${cond.logic} ${part}`)
+          })
+          sql += ` WHERE ${whereParts.join(' ')}`
+        }
+        const res = await window.api.db.query(config, sql, tab.database)
+        if (!res.success || !res.data) { showMsg('error', `导出失败: ${res.error}`); setProgress(null); return }
+        dataRows = res.data.rows; cols = (res.data.columns ?? []).map((c) => c.name)
+      } else {
+        cols = columns.map((c) => c.name)
       }
-      const res = await window.api.db.query(config, sql, tab.database)
-      if (!res.success || !res.data) { showMsg('error', `导出失败: ${res.error}`); setProgress(null); return }
-      const dataRows = res.data.rows; const cols = (res.data.columns ?? []).map((c) => c.name)
       let content = ''; let ext = format; const total = dataRows.length
       if (format === 'csv') {
         setProgress({ current: 0, total, label: '生成 CSV...' })
         const lines: string[] = [cols.join(',')]
         for (let i = 0; i < dataRows.length; i++) {
-          lines.push(cols.map((c) => { const v = dataRows[i][c]; if (v === null || v === undefined) return ''; const s = String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }).join(','))
+          lines.push(cols.map((c) => { const v = dataRows[i][c]; if (v === null || v === undefined) return ''; const s = String(v); return /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }).join(','))
           if ((i + 1) % 500 === 0 || i === dataRows.length - 1) { setProgress({ current: i + 1, total, label: '生成 CSV...' }); await new Promise((r) => setTimeout(r, 0)) }
         }
         content = lines.join('\n')
@@ -488,14 +520,18 @@ export default function DataTable({ tab }: Props) {
         }
         content = JSON.stringify(jsonRows, null, 2)
       } else if (format === 'sql') {
-        setProgress({ current: 0, total: total + 1, label: '获取表结构...' })
         const colNames = cols.map((c) => `\`${c}\``).join(', ')
         content = `-- nexSQL 导出\n-- 数据库: ${tab.database}\n-- 表: ${tab.table}\n-- 生成时间: ${new Date().toLocaleString()}\n\n`
-        content += `DROP TABLE IF EXISTS \`${tab.table}\`;\n`
-        const ddlRes = await window.api.db.getTableDDL(config, tab.database, tab.table)
-        if (ddlRes.success && ddlRes.data) content += ddlRes.data + ';\n\n'
-        setProgress({ current: 1, total: total + 1, label: '生成 SQL...' })
-        if (dataRows.length > 0) {
+        // 结构部分（数据+结构 或 仅结构）
+        if (mode === 'all' || mode === 'structure') {
+          setProgress({ current: 0, total: total + 1, label: '获取表结构...' })
+          content += `DROP TABLE IF EXISTS \`${tab.table}\`;\n`
+          const ddlRes = await window.api.db.getTableDDL(config, tab.database, tab.table)
+          if (ddlRes.success && ddlRes.data) content += ddlRes.data + ';\n\n'
+        }
+        // 数据部分（数据+结构 或 仅数据）
+        if ((mode === 'all' || mode === 'data') && dataRows.length > 0) {
+          setProgress({ current: 1, total: total + 1, label: '生成 SQL...' })
           for (let i = 0; i < dataRows.length; i++) {
             const vals = cols.map((c) => escapeVal(dataRows[i][c]))
             content += `INSERT INTO \`${tab.table}\` (${colNames}) VALUES (${vals.join(', ')});\n`
@@ -504,11 +540,12 @@ export default function DataTable({ tab }: Props) {
         }
       }
       setProgress({ current: total, total, label: '保存文件...' })
-      const saveRes = await window.api.file.saveDialog(`${tab.table}_export.${ext}`, content, ext)
-      if (saveRes.success && saveRes.data?.saved) showMsg('success', `导出成功 (${dataRows.length} 行)`)
+      const modeSuffix = format === 'sql' ? (mode === 'structure' ? '_structure' : mode === 'data' ? '_data' : '') : ''
+      const saveRes = await window.api.file.saveDialog(`${tab.table}${modeSuffix}_export.${ext}`, content, ext)
+      if (saveRes.success && saveRes.data?.saved) showMsg('success', `导出成功${format === 'sql' ? ` (${mode === 'structure' ? '仅结构' : mode === 'data' ? '仅数据' : '数据+结构'})` : ` (${dataRows.length} 行)`}`)
       setProgress(null)
     } catch (err) { setProgress(null); showMsg('error', `导出失败: ${(err as Error).message}`) }
-  }, [config, tab, appliedConditions, showMsg])
+  }, [config, tab, columns, appliedConditions, showMsg])
 
   // ==================== 导入 ====================
   const handleImport = useCallback(async (format: 'csv' | 'json' | 'sql') => {
@@ -522,7 +559,7 @@ export default function DataTable({ tab }: Props) {
       setLoading(true); let insertCount = 0
       const colNames = columns.map((c) => `\`${c.name}\``).join(', ')
       if (format === 'sql') {
-        const statements = content.split(';').map((s) => s.trim()).filter((s) => s && !s.startsWith('--'))
+        const statements = splitSqlStatements(content)
         const total = statements.length; setProgress({ current: 0, total, label: '执行 SQL...' })
         for (let i = 0; i < statements.length; i++) {
           const res = await window.api.db.query(config, statements[i], tab.database)
@@ -569,7 +606,7 @@ export default function DataTable({ tab }: Props) {
 
   useEffect(() => {
     const onImport = (e: Event) => { const detail = (e as CustomEvent).detail; if (detail?.format) handleImport(detail.format) }
-    const onExport = (e: Event) => { const detail = (e as CustomEvent).detail; if (detail?.format) handleExport(detail.format) }
+    const onExport = (e: Event) => { const detail = (e as CustomEvent).detail; if (detail?.format) handleExport(detail.format, detail?.mode) }
     window.addEventListener('nexsql-import', onImport); window.addEventListener('nexsql-export', onExport)
     return () => { window.removeEventListener('nexsql-import', onImport); window.removeEventListener('nexsql-export', onExport) }
   }, [handleImport, handleExport])
@@ -671,6 +708,34 @@ export default function DataTable({ tab }: Props) {
     return true
   }, [columns])
 
+  // 自动列宽计算（根据字段名、类型和内容长度）
+  useEffect(() => {
+    if (columns.length === 0) return
+    const CHAR_W = 7.2 // JetBrains Mono 12px 平均字符宽度
+    const PAD = 22     // 单元格左右内边距
+    const MIN_W = 80
+    const MAX_W = 500
+    const widths = new Map<number, number>()
+    columns.forEach((col, idx) => {
+      // 表头宽度（字段名和类型取较长的那个）
+      const headerLen = Math.max(col.name.length, col.type.length)
+      let maxLen = headerLen
+      // 采样前 50 行数据内容
+      const sampleCount = Math.min(rows.length, 50)
+      for (let i = 0; i < sampleCount; i++) {
+        const val = rows[i][col.name]
+        if (val === null || val === undefined) continue
+        const str = typeof val === 'object' ? JSON.stringify(val) : String(val)
+        if (str.length > maxLen) maxLen = str.length
+      }
+      // 超长内容截断显示，最大按 60 字符计算宽度
+      const displayLen = Math.min(maxLen, 60)
+      const w = Math.round(displayLen * CHAR_W + PAD)
+      widths.set(idx, Math.max(MIN_W, Math.min(MAX_W, w)))
+    })
+    setColWidths(widths)
+  }, [columns, rows])
+
   // 列定义
   const gridColumns = useMemo((): GridColumn[] => {
     return columns.map((col, idx) => {
@@ -706,21 +771,61 @@ export default function DataTable({ tab }: Props) {
     return columns[cell[0]].name
   }, [gridSelection, columns])
 
-  // 全局键盘事件 (Ctrl+C/V for row copy/paste)
+  // 范围选区批量填充辅助函数
+  const fillRangeWithValue = useCallback((val: string) => {
+    const sel = gridSelectionRef.current
+    const range = sel.current?.range
+    if (!range || (range.width <= 1 && range.height <= 1)) return false
+    for (let r = range.y; r < range.y + range.height; r++) {
+      const row = displayRowsRef.current[r]
+      if (!row) continue
+      for (let c = range.x; c < range.x + range.width; c++) {
+        if (c < 0 || c >= columns.length) continue
+        setCellValue(row._row_key, columns[c].name, val)
+      }
+    }
+    return true
+  }, [columns])
+
+  // 全局键盘事件 (Ctrl+C/V + 范围选区输入填充)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement
       const tag = active?.tagName
       const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
-      if (active && active !== document.body && active !== document.documentElement && !active.closest('.gdg-theme-override')) return
-      if ((e.ctrlKey || e.metaKey) && !isEditable) {
+      // 仅当焦点明确在非网格的可编辑元素上时才跳过
+      if (isEditable) return
+      if (active && active !== document.body && active !== document.documentElement && !active.closest('.gdg-theme-override') && !active.closest('.flex.flex-col.h-full')) return
+
+      const sel = gridSelectionRef.current
+      const range = sel.current?.range
+      const hasRange = range && (range.width > 1 || range.height > 1)
+
+      // 范围选区 + Ctrl+V：粘贴剪贴板文本到所有选中单元格
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V') && hasRange) {
+        e.preventDefault(); e.stopPropagation()
+        navigator.clipboard.readText().then((text) => {
+          if (text) fillRangeWithValue(text)
+        }).catch(() => {})
+        return
+      }
+
+      // 范围选区 + 输入字符：批量填充所有选中单元格
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && hasRange) {
+        e.preventDefault(); e.stopPropagation()
+        fillRangeWithValue(e.key)
+        return
+      }
+
+      // Ctrl+C / Ctrl+V（行级操作）
+      if ((e.ctrlKey || e.metaKey)) {
         if (e.key === 'c' || e.key === 'C') { e.preventDefault(); handleCopyRows() }
         if (e.key === 'v' || e.key === 'V') { e.preventDefault(); handlePasteRows() }
       }
     }
-    window.addEventListener('keydown', handleKeyDown); window.addEventListener('keyup', () => {})
-    return () => { window.removeEventListener('keydown', handleKeyDown) }
-  }, [handleCopyRows, handlePasteRows])
+    window.addEventListener('keydown', handleKeyDown, true); window.addEventListener('keyup', () => {})
+    return () => { window.removeEventListener('keydown', handleKeyDown, true) }
+  }, [handleCopyRows, handlePasteRows, fillRangeWithValue])
 
   const tbBtn = "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
   const tbIconBtn = "flex items-center justify-center p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -780,10 +885,14 @@ export default function DataTable({ tab }: Props) {
         <div className="relative" ref={exportMenuRef}>
           <button onClick={() => setShowExportMenu((v) => !v)} disabled={loading || columns.length === 0} className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`} title="导出数据"><Download size={14} /><ChevronDown size={10} /></button>
           {showExportMenu && (
-            <div className="absolute top-full left-0 mt-1 z-50 bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[120px]">
+            <div className="absolute top-full right-0 mt-1 z-50 bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[160px]">
               <button onClick={() => handleExport('csv')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 CSV</button>
               <button onClick={() => handleExport('json')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 JSON</button>
-              <button onClick={() => handleExport('sql')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 SQL</button>
+              <div className="border-t border-border-light my-1" />
+              <div className="px-3 py-1 text-[10px] text-text-muted uppercase tracking-wide">SQL 导出</div>
+              <button onClick={() => handleExport('sql', 'all')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">数据 + 结构</button>
+              <button onClick={() => handleExport('sql', 'structure')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">仅结构</button>
+              <button onClick={() => handleExport('sql', 'data')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">仅数据</button>
             </div>
           )}
         </div>
