@@ -14,14 +14,18 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
+    "@glideapps/glide-data-grid": "^6.0.3",
     "@monaco-editor/react": "^4.6.0",
     "electron-store": "^8.2.0",
+    "lodash": "^4.18.1",
     "lucide-react": "^0.344.0",
+    "marked": "^4.3.0",
     "monaco-editor": "^0.46.0",
     "mysql2": "^3.9.2",
     "react": "^18.2.0",
     "react-data-grid": "7.0.0-beta.43",
     "react-dom": "^18.2.0",
+    "react-responsive-carousel": "^3.2.23",
     "sql-formatter": "^15.8.2",
     "ssh2": "^1.17.0",
     "zustand": "^4.5.2"
