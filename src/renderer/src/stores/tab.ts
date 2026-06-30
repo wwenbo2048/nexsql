@@ -51,6 +51,7 @@ interface TabState {
   openTableDesign: (connectionId: string, database: string, table: string) => void
   openErDiagram: (connectionId: string, database: string) => void
   openRedisBrowser: (connectionId: string) => void
+  openDbSync: (connectionId: string, database: string) => void
   /** 确保浏览器 Tab 存在并激活 */
   ensureBrowserTab: () => void
 }
@@ -207,6 +208,16 @@ export const useTabStore = create<TabState>((set, get) => ({
       type: 'redis-browser',
       title: `Redis`,
       connectionId
+    })
+  },
+
+  openDbSync: (connectionId, database) => {
+    get().openTab({
+      id: `sync-${connectionId}-${database}-${Date.now()}`,
+      type: 'db-sync',
+      title: `同步 ${database}`,
+      connectionId,
+      database
     })
   },
 

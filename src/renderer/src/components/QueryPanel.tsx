@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import Editor from '@monaco-editor/react'
 import type { editor, languages, IDisposable } from 'monaco-editor'
-import { Play, Loader2, Save, AlertCircle, Database, Clock, Check, Download, Code2 } from 'lucide-react'
+import { Play, Loader2, Save, AlertCircle, Database, Clock, Check, Download, Code2, CheckCircle2 } from 'lucide-react'
 import { useBrowserStore } from '@stores/browser'
 import { useConnectionStore } from '@stores/connection'
 import type { ColumnInfo } from '@shared/types'
@@ -584,7 +584,11 @@ export default function QueryPanel() {
             {/* 结果表 */}
             <div className="flex-1 overflow-auto">
               {results.rows.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-text-muted text-xs">空结果集</div>
+                <div className="flex items-center justify-center h-full text-xs gap-1.5">
+                  {results.columns.length === 0
+                    ? <span className="flex items-center gap-1.5 text-green-400"><CheckCircle2 size={14} /> 执行成功</span>
+                    : <span className="text-text-muted">空结果集</span>}
+                </div>
               ) : (
                 <table className="w-full text-xs border-collapse">
                   <thead className="sticky top-0 bg-bg-secondary z-10">

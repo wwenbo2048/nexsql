@@ -191,7 +191,7 @@ export interface IpcResponse<T = unknown> {
 
 // ==================== Tab 类型 ====================
 
-export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet' | 'redis-browser'
+export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet' | 'redis-browser' | 'db-sync'
 
 export interface Tab {
   id: string

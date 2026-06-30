@@ -7,6 +7,7 @@ import DataTable from './DataTable'
 import StructureEditor from './StructureEditor'
 import ERDiagramView from './ERDiagramView'
 import RedisBrowser from './RedisBrowser'
+import DatabaseSyncView from './DatabaseSyncView'
 import { Database, Terminal } from 'lucide-react'
 import type { Tab } from '@shared/types'
 
@@ -50,6 +51,19 @@ export default function MiddleArea() {
         return conn
           ? <RedisBrowser config={conn} onClose={() => useTabStore.getState().closeTab(tab.id)} />
           : <EmptyTab icon="redis" />
+      }
+
+      case 'db-sync': {
+        const conn = connections.find((c) => c.id === tab.connectionId)
+        return (
+          <DatabaseSyncView
+            key={tab.id}
+            tab={tab}
+            onClose={() => useTabStore.getState().closeTab(tab.id)}
+            initialConfig={conn}
+            initialDatabase={tab.database}
+          />
+        )
       }
 
       default:

@@ -1,6 +1,7 @@
 import { ipcMain, type BrowserWindow, dialog } from 'electron'
 import { writeFile, readFile } from 'fs/promises'
-import { readFileSync } from 'fs'
+import { createReadStream, statSync } from 'fs'
+import { Readable } from 'stream'
 import Store from 'electron-store'
 import { uuidv4 } from './uuid'
 import { encryptPassword, decryptPassword } from './crypto'
@@ -48,103 +49,115 @@ function getFullErrorMessage(err: unknown): string {
 }
 
 /**
- * 字符串感知的 SQL 语句分割（避免字符串内的分号截断）
- * 支持 DELIMITER 指令（Navicat / mysqldump 导出的存储过程、函数、触发器等）
+ * 流式 SQL 分割器：逐块读取，逐条产出完整 SQL 语句。
+ * 支持 DELIMITER 指令和字符串/注释感知的 ; 分割。
+ * 内存友好：不会一次性加载整个文件。
  */
-function splitSqlStatements(sql: string): string[] {
-  // Phase 1: 按行处理 DELIMITER 指令，将 SQL 分成多个段，每段有自己的分隔符
-  const segments: { delimiter: string; content: string }[] = []
-  let currentDelimiter = ';'
-  let currentContent = ''
-  let inStr = false // 跨行字符串状态（用于避免字符串内的 DELIMITER 被误判）
+class StreamingSqlSplitter {
+  private delimiter = ';'
+  private buf: string[] = []
+  private inSingle = false
+  private inDouble = false
+  private inBacktick = false
+  private inLineComment = false
+  private inBlockComment = false
+  private lineBuf = ''
 
-  const lines = sql.split('\n')
-  for (const line of lines) {
-    const trimmed = line.trim()
+  /** 喙入一段文本，返回由此段文本产生的完整语句 */
+  feed(text: string): string[] {
+    const completed: string[] = []
+    for (let i = 0; i < text.length; i++) {
+      this.lineBuf += text[i]
+      if (text[i] === '\n') {
+        this.flushLine(completed)
+      }
+    }
+    return completed
+  }
 
-    // 只有不在字符串内时才检测 DELIMITER 指令
-    if (!inStr) {
-      const delimMatch = trimmed.match(/^DELIMITER\s+(.+)$/i)
-      if (delimMatch) {
-        // 保存当前段
-        segments.push({ delimiter: currentDelimiter, content: currentContent })
-        currentContent = ''
-        currentDelimiter = delimMatch[1].trim()
+  /** 所有块读完后调用，返回剩余内容（可能含未结束的语句） */
+  flush(): string[] {
+    const completed: string[] = []
+    if (this.lineBuf) {
+      this.flushLine(completed)
+    }
+    const remaining = this.buf.join('').trim()
+    if (remaining) completed.push(remaining)
+    return completed
+  }
+
+  private flushLine(completed: string[]): void {
+    const inAny = this.inSingle || this.inDouble || this.inBacktick || this.inBlockComment || this.inLineComment
+    if (!inAny) {
+      const m = this.lineBuf.trim().match(/^DELIMITER\s+(.+)$/i)
+      if (m) {
+        const stmt = this.buf.join('').trim()
+        if (stmt) completed.push(stmt)
+        this.buf.length = 0
+        this.delimiter = m[1].trim()
+        this.lineBuf = ''
+        return
+      }
+    }
+    this.processChars(this.lineBuf, completed)
+    this.lineBuf = ''
+  }
+
+  private processChars(chars: string, completed: string[]): void {
+    if (this.delimiter !== ';') {
+      this.buf.push(chars)
+      const content = this.buf.join('')
+      let startIdx = 0
+      let delimIdx: number
+      while ((delimIdx = content.indexOf(this.delimiter, startIdx)) !== -1) {
+        const stmt = content.slice(startIdx, delimIdx).trim()
+        if (stmt) completed.push(stmt)
+        startIdx = delimIdx + this.delimiter.length
+      }
+      const remainder = content.slice(startIdx)
+      this.buf.length = 0
+      if (remainder) this.buf.push(remainder)
+      return
+    }
+
+    // 标准 ; 分隔符——字符级状态机
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i]; const next = chars[i + 1]
+      if (this.inLineComment) { if (ch === '\n') { this.inLineComment = false; this.buf.push(' ') } continue }
+      if (this.inBlockComment) { if (ch === '*' && next === '/') { this.inBlockComment = false; i++ } continue }
+      if (this.inSingle) {
+        this.buf.push(ch)
+        if (ch === '\\' && next) { this.buf.push(next); i++; continue }
+        if (ch === "'" && next === "'") { this.buf.push(next); i++; continue }
+        if (ch === "'") this.inSingle = false
         continue
       }
-    }
-
-    // 检查此行是否影响字符串状态（粗略检查）
-    if (!inStr) {
-      const singleQuotes = (line.match(/(?<!\\)'/g) || []).length
-      if (singleQuotes % 2 === 1) inStr = true
-    } else {
-      const singleQuotes = (line.match(/(?<!\\)'/g) || []).length
-      if (singleQuotes % 2 === 1) inStr = false
-    }
-
-    currentContent += line + '\n'
-  }
-  segments.push({ delimiter: currentDelimiter, content: currentContent })
-
-  // Phase 2: 对每个段用对应的分隔符分割
-  const statements: string[] = []
-  for (const seg of segments) {
-    if (seg.delimiter === ';') {
-      statements.push(...splitBySemicolon(seg.content))
-    } else {
-      // 自定义分隔符（如 $$, ;;）：直接 split，存储过程体内的 ; 不会被截断
-      const parts = seg.content.split(seg.delimiter)
-      for (const part of parts) {
-        const stmt = part.trim()
-        if (stmt) statements.push(stmt)
+      if (this.inDouble) {
+        this.buf.push(ch)
+        if (ch === '\\' && next) { this.buf.push(next); i++; continue }
+        if (ch === '"') this.inDouble = false
+        continue
       }
+      if (this.inBacktick) {
+        this.buf.push(ch)
+        if (ch === '`' && next === '`') { this.buf.push(next); i++; continue }
+        if (ch === '`') this.inBacktick = false
+        continue
+      }
+      if (ch === '-' && next === '-') { this.inLineComment = true; i++; continue }
+      if (ch === '/' && next === '*') { this.inBlockComment = true; i++; continue }
+      if (ch === "'") { this.inSingle = true; this.buf.push(ch); continue }
+      if (ch === '"') { this.inDouble = true; this.buf.push(ch); continue }
+      if (ch === '`') { this.inBacktick = true; this.buf.push(ch); continue }
+      if (ch === ';') {
+        const stmt = this.buf.join('').trim()
+        if (stmt) completed.push(stmt)
+        this.buf.length = 0
+        continue
+      }
+      this.buf.push(ch)
     }
   }
-  return statements
-}
-
-/** 标准 ; 分隔符的字符级分割 */
-function splitBySemicolon(sql: string): string[] {
-  const statements: string[] = []
-  let current = ''
-  let inSingle = false, inDouble = false, inBacktick = false
-  let inLineComment = false, inBlockComment = false
-
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i]; const next = sql[i + 1]
-    if (inLineComment) { if (ch === '\n') { inLineComment = false; current += ' ' } continue }
-    if (inBlockComment) { if (ch === '*' && next === '/') { inBlockComment = false; i++ } continue }
-    if (inSingle) {
-      current += ch
-      if (ch === '\\' && next) { current += next; i++; continue }
-      if (ch === "'" && next === "'") { current += next; i++; continue }
-      if (ch === "'") inSingle = false
-      continue
-    }
-    if (inDouble) {
-      current += ch
-      if (ch === '\\' && next) { current += next; i++; continue }
-      if (ch === '"') inDouble = false
-      continue
-    }
-    if (inBacktick) {
-      current += ch
-      if (ch === '`' && next === '`') { current += next; i++; continue }
-      if (ch === '`') inBacktick = false
-      continue
-    }
-    if (ch === '-' && next === '-') { inLineComment = true; i++; continue }
-    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue }
-    if (ch === "'") { inSingle = true; current += ch; continue }
-    if (ch === '"') { inDouble = true; current += ch; continue }
-    if (ch === '`') { inBacktick = true; current += ch; continue }
-    if (ch === ';') { const stmt = current.trim(); if (stmt) statements.push(stmt); current = ''; continue }
-    current += ch
-  }
-  const last = current.trim()
-  if (last) statements.push(last)
-  return statements
 }
 
 export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
@@ -474,68 +487,94 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
         const conn = await pool.getConnection()
         try {
           await conn.changeUser({ database })
-          // 支持文件路径或 SQL 内容：如果以 .sql 结尾且不含分号，视为文件路径
-          let sqlContent = sqlOrPath
+
+          // 确定输入源：文件路径或 SQL 字符串
+          let stream: NodeJS.ReadableStream
+          let totalSize: number
           if (sqlOrPath.endsWith('.sql') && !sqlOrPath.includes(';')) {
-            sqlContent = readFileSync(sqlOrPath, 'utf-8')
+            totalSize = statSync(sqlOrPath).size
+            stream = createReadStream(sqlOrPath, { encoding: 'utf-8', highWaterMark: 128 * 1024 })
+          } else {
+            totalSize = Buffer.byteLength(sqlOrPath, 'utf-8')
+            stream = Readable.from(sqlOrPath, { highWaterMark: 128 * 1024 })
           }
-          const statements = splitSqlStatements(sqlContent)
-          let executed = 0
 
-          // 优化：批量执行（多条语句拼接后一次查询），大幅减少网络往返
+          const splitter = new StreamingSqlSplitter()
           const BATCH_SIZE = 50
-          const SKIP_ERRORS = new Set([
-            'Query was empty',
-            'No database selected'
-          ])
+          const SKIP_ERRORS = new Set(['Query was empty', 'No database selected'])
+          let batch: string[] = []
+          let executed = 0
+          let bytesRead = 0
+          let lastProgressAt = 0
 
-          // 关闭 autocommit，使用事务批量提交
           await conn.query('SET autocommit = 0')
           let inTransaction = true
 
-          for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+          // 批量执行辅助函数
+          const executeBatch = async (stmts: string[]): Promise<void> => {
+            if (stmts.length === 0) return
+            const batchSql = stmts.join(';\n')
+            try {
+              await conn.query(batchSql)
+              executed += stmts.length
+            } catch {
+              // 批量失败，回退逐条执行
+              await conn.rollback()
+              await conn.query('SET autocommit = 0')
+              inTransaction = true
+              for (const stmt of stmts) {
+                try {
+                  await conn.query(stmt)
+                  executed++
+                } catch (retryErr: any) {
+                  const msg = retryErr?.message || String(retryErr)
+                  if (SKIP_ERRORS.has(msg)) continue
+                  const preview = stmt.length > 200 ? stmt.slice(0, 200) + '...' : stmt
+                  throw new Error(`执行失败:\n${msg}\n\nSQL: ${preview}`)
+                }
+              }
+            }
+          }
+
+          for await (const chunk of stream) {
             if (cancelFlags.has(operationId)) {
               cancelFlags.delete(operationId)
               if (inTransaction) await conn.rollback()
               return { success: false, error: '已取消' }
             }
 
-            const batch = statements.slice(i, i + BATCH_SIZE)
-            const batchSql = batch.join(';\n')
+            const text = typeof chunk === 'string' ? chunk : (chunk as Buffer).toString('utf-8')
+            bytesRead += Buffer.byteLength(text, 'utf-8')
 
-            try {
-              await conn.query(batchSql)
-              executed += batch.length
-            } catch (queryErr: any) {
-              // 批量执行失败，回退到逐条执行以定位问题
-              await conn.rollback()
-              inTransaction = false
+            const stmts = splitter.feed(text)
+            for (const s of stmts) batch.push(s)
 
-              // 重新逐条执行（之前的已回滚，需要重跑）
-              await conn.query('SET autocommit = 0')
-              inTransaction = true
-              let reExecuted = 0
-
-              for (let j = 0; j <= i + batch.length - 1 && j < statements.length; j++) {
-                const stmt = statements[j]
-                if (stmt.length === 0) continue
-                try {
-                  await conn.query(stmt)
-                  reExecuted++
-                } catch (retryErr: any) {
-                  const msg = retryErr?.message || String(retryErr)
-                  // 跳过一些无害的错误
-                  if (SKIP_ERRORS.has(msg)) { continue }
-                  const preview = stmt.length > 200 ? stmt.slice(0, 200) + '...' : stmt
-                  throw new Error(`语句 ${j + 1}/${statements.length} 执行失败:\n${msg}\n\nSQL: ${preview}`)
-                }
-              }
-              executed = reExecuted
+            // 攒满一批就执行
+            while (batch.length >= BATCH_SIZE) {
+              const toExec = batch.splice(0, BATCH_SIZE)
+              await executeBatch(toExec)
             }
 
-            if ((i + BATCH_SIZE) % 500 === 0 || i + BATCH_SIZE >= statements.length) {
-              event.sender.send('db:restoreProgress', { operationId, current: Math.min(i + BATCH_SIZE, statements.length), total: statements.length })
+            // 按进度间隔上报（每 256KB 或全部读完）
+            if (bytesRead - lastProgressAt >= 256 * 1024 || bytesRead >= totalSize) {
+              lastProgressAt = bytesRead
+              event.sender.send('db:restoreProgress', {
+                operationId,
+                current: bytesRead,
+                total: totalSize,
+                executed
+              })
             }
+          }
+
+          // flush 分割器中剩余的内容
+          const remaining = splitter.flush()
+          for (const s of remaining) batch.push(s)
+
+          // 执行最后一批
+          if (batch.length > 0) {
+            await executeBatch(batch)
+            batch.length = 0
           }
 
           // 提交事务

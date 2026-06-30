@@ -1,6 +1,15 @@
 import { useRef, useCallback, useEffect } from 'react'
-import { Plus, Database as DatabaseIcon } from 'lucide-react'
+import {
+  Plus,
+  Database as DatabaseIcon,
+  Terminal,
+  ArrowLeftRight,
+  RefreshCw,
+  KeyRound,
+} from 'lucide-react'
 import { useUiStore } from '@stores/ui'
+import { useTabStore } from '@stores/tab'
+import { useBrowserStore } from '@stores/browser'
 import ConnectionTree from './ConnectionTree'
 
 export default function Sidebar() {
@@ -9,6 +18,11 @@ export default function Sidebar() {
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
+
+  // 快捷操作所需的状态
+  const { selectedConnectionId, selectedDatabase, refreshList } = useBrowserStore()
+  const openQuery = useTabStore((s) => s.openQuery)
+  const openDbSync = useTabStore((s) => s.openDbSync)
 
   const handleMouseDown = useCallback(() => {
     dragging.current = true
@@ -40,6 +54,10 @@ export default function Sidebar() {
     }
   }, [handleMouseMove, handleMouseUp])
 
+  // 快捷按钮通用样式
+  const quickBtn =
+    'flex items-center justify-center w-8 h-8 rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors'
+
   return (
     <>
       <div
@@ -59,6 +77,57 @@ export default function Sidebar() {
             title="新建连接"
           >
             <Plus size={16} />
+          </button>
+        </div>
+
+        {/* 快捷操作工具栏 */}
+        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-border-light bg-bg-tertiary">
+          <button
+            onClick={() => openConnectionModal(undefined, 'mysql')}
+            className={quickBtn}
+            title="新建 MySQL 连接"
+          >
+            <DatabaseIcon size={15} />
+          </button>
+          <button
+            onClick={() => openConnectionModal(undefined, 'redis')}
+            className={quickBtn}
+            title="新建 Redis 连接"
+          >
+            <KeyRound size={15} />
+          </button>
+          <div className="w-px h-5 bg-border-light mx-0.5" />
+          <button
+            onClick={() => {
+              if (selectedConnectionId) {
+                openQuery(selectedConnectionId, selectedDatabase ?? undefined)
+              }
+            }}
+            disabled={!selectedConnectionId}
+            className={`${quickBtn} disabled:opacity-30 disabled:cursor-not-allowed`}
+            title="新建查询"
+          >
+            <Terminal size={15} />
+          </button>
+          <button
+            onClick={() => {
+              if (selectedConnectionId && selectedDatabase) {
+                openDbSync(selectedConnectionId, selectedDatabase)
+              }
+            }}
+            disabled={!selectedConnectionId || !selectedDatabase}
+            className={`${quickBtn} disabled:opacity-30 disabled:cursor-not-allowed`}
+            title="数据同步"
+          >
+            <ArrowLeftRight size={15} />
+          </button>
+          <div className="w-px h-5 bg-border-light mx-0.5" />
+          <button
+            onClick={() => refreshList()}
+            className={`${quickBtn} ml-auto`}
+            title="刷新列表"
+          >
+            <RefreshCw size={14} />
           </button>
         </div>
 

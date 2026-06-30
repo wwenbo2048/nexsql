@@ -78,12 +78,33 @@ export default function MiddlePanel() {
   const [renameState, setRenameState] = useState<{ oldName: string; newName: string } | null>(null)
   // 多选状态（Ctrl+点击/Shift+点击）
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set())
+  // 批量删除进度
+  const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number; currentName: string } | null>(null)
 
   const config = connections.find((c) => c.id === selectedConnectionId)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
 
   // 切换数据库/分类/连接时清空多选
   useEffect(() => { setSelectedTables(new Set()) }, [selectedDatabase, selectedCategory, selectedConnectionId])
+
+  // Ctrl/Cmd+A 全选表
+  useEffect(() => {
+    if (selectedCategory !== 'tables') return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        // 排除输入框、文本域和 Monaco 编辑器
+        const target = e.target as HTMLElement
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+        if (target.closest('.monaco-editor')) return
+        const filtered = search ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())) : tables
+        if (filtered.length === 0) return
+        e.preventDefault()
+        setSelectedTables(new Set(filtered.map((t) => t.name)))
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedCategory, tables, search])
 
   const loadData = useCallback(async () => {
     if (!config || !selectedDatabase) return
@@ -211,23 +232,40 @@ export default function MiddlePanel() {
       else if (selectedCategory === 'functions') keyword = 'FUNCTION'
       else if (selectedCategory === 'events') keyword = 'EVENT'
       const names = Array.from(selectedTables)
-      const errors: string[] = []
-      // 关闭外键检查，避免互相引用导致删除失败
-      if (keyword === 'TABLE') {
-        await window.api.db.query(config, 'SET FOREIGN_KEY_CHECKS = 0', selectedDatabase)
+      setDeleteProgress({ current: 0, total: names.length, currentName: names[0] })
+
+      const deleted = new Set<string>()
+      let pending = [...names]
+
+      // 多轮删除：先删能删的，依赖被删除后重试剩余的
+      for (let round = 0; round < names.length && pending.length > 0; round++) {
+        const stillFailing: string[] = []
+        for (const name of pending) {
+          setDeleteProgress({ current: deleted.size, total: names.length, currentName: name })
+          // 用多语句确保 SET 和 DROP 在同一连接上执行
+          const sql = keyword === 'TABLE'
+            ? `SET FOREIGN_KEY_CHECKS = 0; DROP TABLE IF EXISTS \`${name}\`; SET FOREIGN_KEY_CHECKS = 1;`
+            : `DROP ${keyword} IF EXISTS \`${name}\`;`
+          const res = await window.api.db.query(config, sql, selectedDatabase)
+          if (res.success) {
+            deleted.add(name)
+          } else {
+            stillFailing.push(name)
+          }
+        }
+        // 本轮无进展，停止重试
+        if (stillFailing.length === pending.length) break
+        pending = stillFailing
       }
-      for (const name of names) {
-        const res = await window.api.db.query(config, `DROP ${keyword} IF EXISTS \`${name}\``, selectedDatabase)
-        if (!res.success) errors.push(`${name}: ${res.error}`)
-      }
-      if (keyword === 'TABLE') {
-        await window.api.db.query(config, 'SET FOREIGN_KEY_CHECKS = 1', selectedDatabase)
-      }
+
+      setDeleteProgress(null)
       setSelectedTables(new Set())
       selectTable(null)
       refreshList()
-      if (errors.length > 0) {
-        alert(`部分删除失败:\n${errors.join('\n')}`)
+
+      const failed = names.filter((n) => !deleted.has(n))
+      if (failed.length > 0) {
+        alert(`以下 ${failed.length} 个对象删除失败（可能存在无法解除的依赖）:\n${failed.join(', ')}`)
       }
       return
     }
@@ -764,6 +802,30 @@ export default function MiddlePanel() {
               >
                 确定
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量删除进度 */}
+      {deleteProgress && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
+          <div className="bg-bg-tertiary border border-border rounded-lg shadow-2xl p-6 w-80">
+            <div className="flex items-center gap-2 mb-3">
+              <Loader2 size={16} className="animate-spin text-accent" />
+              <span className="text-sm font-medium text-text-primary">
+                正在删除 {deleteProgress.total} 个对象...
+              </span>
+            </div>
+            <div className="text-xs text-text-muted mb-2 truncate">
+              {deleteProgress.current} / {deleteProgress.total}
+              {deleteProgress.currentName && <span className="ml-1">· {deleteProgress.currentName}</span>}
+            </div>
+            <div className="h-2 bg-bg-primary rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-200"
+                style={{ width: `${deleteProgress.total > 0 ? (deleteProgress.current / deleteProgress.total) * 100 : 0}%` }}
+              />
             </div>
           </div>
         </div>

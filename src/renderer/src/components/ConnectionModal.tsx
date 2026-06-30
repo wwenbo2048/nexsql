@@ -21,6 +21,7 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 export default function ConnectionModal() {
   const show = useUiStore((s) => s.showConnectionModal)
   const editingId = useUiStore((s) => s.editingConnectionId)
+  const presetType = useUiStore((s) => s.connectionPresetType)
   const close = useUiStore((s) => s.closeConnectionModal)
   const { connections, saveConnection } = useConnectionStore()
 
@@ -34,10 +35,16 @@ export default function ConnectionModal() {
       const conn = connections.find((c) => c.id === editingId)
       if (conn) setConfig({ ...conn })
     } else if (show) {
-      setConfig({ ...DEFAULT_CONFIG })
+      const base = { ...DEFAULT_CONFIG }
+      if (presetType === 'redis') {
+        base.type = 'redis'
+        base.port = 6379
+        base.user = ''
+      }
+      setConfig(base)
     }
     setTestResult(null)
-  }, [show, editingId, connections])
+  }, [show, editingId, connections, presetType])
 
   if (!show) return null
 

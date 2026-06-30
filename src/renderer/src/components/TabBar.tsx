@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Terminal, Table as TableIcon, Eye, Network, FolderTree, Plus, KeyRound } from 'lucide-react'
+import { X, Terminal, Table as TableIcon, Eye, Network, FolderTree, Plus, KeyRound, ArrowLeftRight, Loader2 } from 'lucide-react'
 import { useTabStore } from '@stores/tab'
 import { useBrowserStore } from '@stores/browser'
 import type { Tab } from '@shared/types'
@@ -87,6 +87,7 @@ export default function TabBar() {
     if (tab.type === 'table-design') return <Eye size={size} className="text-purple-400" />
     if (tab.type === 'er') return <Network size={size} className="text-green-400" />
     if (tab.type === 'redis-browser') return <KeyRound size={size} className="text-red-400" />
+    if (tab.type === 'db-sync') return <ArrowLeftRight size={size} className="text-cyan-400" />
     return null
   }
 
@@ -127,11 +128,17 @@ export default function TabBar() {
                 </span>
               )}
             </div>
-            {tab.dirty && <span className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0" />}
+            {tab.dirty && tab.type !== 'db-sync' && <span className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0" />}
+            {tab.type === 'db-sync' && tab.dirty && (
+              <Loader2 size={12} className="animate-spin text-cyan-400 flex-shrink-0" />
+            )}
             {!isBrowser && (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
+                  if (tab.type === 'db-sync' && tab.dirty) {
+                    if (!confirm('同步正在执行中，关闭后后台仍会继续。确定关闭吗？')) return
+                  }
                   closeTab(tab.id)
                 }}
                 className="p-0.5 rounded hover:bg-bg-hover opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -155,11 +162,26 @@ export default function TabBar() {
 
       {/* 右键菜单 */}
       {ctxMenu && (() => {
+        const targetTab = tabs.find((t) => t.id === ctxMenu.tabId)
         const targetIdx = tabs.findIndex((t) => t.id === ctxMenu.tabId)
         const hasTabsToRight = targetIdx >= 0 && targetIdx < tabs.length - 1
         const closableCount = tabs.filter((t) => t.type !== 'browser').length
+        const hasSyncingTab = tabs.some((t) => (t.id === ctxMenu.tabId ? false : t.type === 'db-sync' && t.dirty))
         const menuItemCls = 'px-3 py-1.5 text-xs hover:bg-bg-hover text-text-primary cursor-pointer transition-colors whitespace-nowrap'
         const disabledCls = 'px-3 py-1.5 text-xs text-text-muted cursor-not-allowed whitespace-nowrap'
+        const handleCtxClose = () => {
+          if (targetTab?.type === 'db-sync' && targetTab.dirty) {
+            if (!confirm('同步正在执行中，关闭后后台仍会继续。确定关闭吗？')) return
+          }
+          closeTab(ctxMenu.tabId); setCtxMenu(null)
+        }
+        const handleCtxCloseOther = () => {
+          if (closableCount <= 1) return
+          if (hasSyncingTab) {
+            if (!confirm('有同步任务正在执行中，关闭其他标签页不影响后台执行。确定吗？')) return
+          }
+          closeOtherTabs(ctxMenu.tabId); setCtxMenu(null)
+        }
         return (
           <div
             className="fixed z-[9999] bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[130px]"
@@ -168,11 +190,11 @@ export default function TabBar() {
           >
             <div
               className={menuItemCls}
-              onClick={() => { closeTab(ctxMenu.tabId); setCtxMenu(null) }}
+              onClick={handleCtxClose}
             >关闭</div>
             <div
               className={closableCount > 1 ? menuItemCls : disabledCls}
-              onClick={() => { if (closableCount > 1) { closeOtherTabs(ctxMenu.tabId); setCtxMenu(null) } }}
+              onClick={handleCtxCloseOther}
             >关闭其他</div>
             <div
               className={hasTabsToRight ? menuItemCls : disabledCls}

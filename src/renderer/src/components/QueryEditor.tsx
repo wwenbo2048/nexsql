@@ -11,7 +11,8 @@ import {
   Trash2,
   History,
   Activity,
-  Save
+  Save,
+  CheckCircle2
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
@@ -113,9 +114,7 @@ interface Props {
 }
 
 export default function QueryEditor({ tab }: Props) {
-  const [sql, setSql] = useState<string>(
-    tab.sql ?? (tab.database ? `-- 在 ${tab.database} 上执行查询\nSELECT * FROM \`\`\nLIMIT 100;` : '-- 输入 SQL 查询\n')
-  )
+  const [sql, setSql] = useState<string>(tab.sql ?? '')
   const [result, setResult] = useState<QueryResult | null>(null)
   const [multiResults, setMultiResults] = useState<{ sql: string; result?: QueryResult; error?: string }[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -584,7 +583,8 @@ export default function QueryEditor({ tab }: Props) {
                     {r.result && (
                       <span className="flex-shrink-0 opacity-60">
                         {r.result.rows.length > 0 ? `${r.result.rows.length} 行` :
-                          r.result.affectedRows > 0 ? `${r.result.affectedRows} 行受影响` : ''}
+                          r.result.affectedRows > 0 ? `${r.result.affectedRows} 行受影响` :
+                          r.result.columns.length === 0 ? 'OK' : ''}
                         {r.result.duration > 0 ? ` (${Math.round(r.result.duration)}ms)` : ''}
                       </span>
                     )}
@@ -615,6 +615,11 @@ export default function QueryEditor({ tab }: Props) {
                 )}
                 {result.affectedRows > 0 && (
                   <span>{result.affectedRows} 行受影响</span>
+                )}
+                {result.columns.length === 0 && result.affectedRows === 0 && (
+                  <span className="flex items-center gap-1 text-green-400">
+                    <CheckCircle2 size={12} /> 执行成功
+                  </span>
                 )}
                 {result.changedRows !== undefined && result.changedRows > 0 && (
                   <span>{result.changedRows} 行已修改</span>
@@ -664,7 +669,9 @@ export default function QueryEditor({ tab }: Props) {
                     {result.rows.length === 0 ? (
                       <tr>
                         <td colSpan={result.columns.length + 1} className="text-center text-text-muted py-4">
-                          空结果集
+                          {result.columns.length === 0
+                            ? <span className="flex items-center justify-center gap-1.5 text-green-400"><CheckCircle2 size={14} /> 执行成功</span>
+                            : '空结果集'}
                         </td>
                       </tr>
                     ) : (

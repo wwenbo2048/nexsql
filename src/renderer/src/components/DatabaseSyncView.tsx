@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Loader2, AlertCircle, ArrowLeftRight, Check, Plus, Minus, RefreshCw,
-  CheckCircle2, XCircle, Database, ChevronRight, ChevronDown, Play, X, Copy
+  CheckCircle2, XCircle, Database, ChevronRight, ChevronDown, Play, X, Copy,
+  Table2
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
-import type { ConnectionConfig, ColumnInfo } from '@shared/types'
+import { useTabStore } from '@stores/tab'
+import type { ConnectionConfig, ColumnInfo, Tab } from '@shared/types'
 
 interface Props {
   onClose: () => void
   initialConfig?: ConnectionConfig
   initialDatabase?: string
+  tab?: Tab
 }
 
 interface ColumnDiff {
@@ -27,8 +30,29 @@ interface TableDiff {
   ddl?: string // left-only 时存放源表 DDL
 }
 
-export default function DatabaseSyncView({ onClose, initialConfig, initialDatabase }: Props) {
+// ===== 模块级同步状态管理（允许 Tab 切换时后台继续执行） =====
+interface SyncRuntime {
+  executing: boolean
+  progress: string | null
+  result: { success: number; failed: string[] } | null
+  abort: boolean
+}
+const syncRuntimes = new Map<string, SyncRuntime>()
+
+function getSyncRuntime(id: string): SyncRuntime {
+  if (!syncRuntimes.has(id)) {
+    syncRuntimes.set(id, { executing: false, progress: null, result: null, abort: false })
+  }
+  return syncRuntimes.get(id)!
+}
+
+export default function DatabaseSyncView({ onClose, initialConfig, initialDatabase, tab }: Props) {
   const connections = useConnectionStore((s) => s.connections)
+  const updateTab = useTabStore((s) => s.updateTab)
+
+  // 唯一运行时 ID（每个 Tab 实例独立）
+  const runtimeId = useRef(tab?.id ?? `sync-${Date.now()}`)
+  const rt = getSyncRuntime(runtimeId.current)
 
   // 源（左）
   const [leftConfigId, setLeftConfigId] = useState(initialConfig?.id ?? connections[0]?.id ?? '')
@@ -45,9 +69,11 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
   const [error, setError] = useState<string | null>(null)
   const [tableDiffs, setTableDiffs] = useState<TableDiff[]>([])
   const [expandedTable, setExpandedTable] = useState<string | null>(null)
-  const [executing, setExecuting] = useState(false)
-  const [execResult, setExecResult] = useState<{ success: number; failed: string[] } | null>(null)
+  const [executing, setExecuting] = useState(rt.executing)
+  const [execResult, setExecResult] = useState<{ success: number; failed: string[] } | null>(rt.result)
   const [copied, setCopied] = useState(false)
+  const [syncMode, setSyncMode] = useState<'structure' | 'data'>('structure')
+  const [execProgress, setExecProgress] = useState<string | null>(rt.progress)
 
   const leftConfig = connections.find((c) => c.id === leftConfigId)
   const rightConfig = connections.find((c) => c.id === rightConfigId)
@@ -66,6 +92,34 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
       if (res.success && res.data) setRightDatabases(res.data.map((d) => d.name))
     })
   }, [rightConfig])
+
+  // 轮询模块级运行时状态（支持 Tab 切回时恢复进度）
+  useEffect(() => {
+    if (!executing) return
+    const timer = setInterval(() => {
+      const r = syncRuntimes.get(runtimeId.current)
+      if (!r) return
+      if (r.progress !== execProgress) setExecProgress(r.progress)
+      if (!r.executing && executing) {
+        setExecuting(false)
+        setExecProgress(null)
+        setExecResult(r.result)
+      }
+    }, 500)
+    return () => clearInterval(timer)
+  }, [executing, execProgress, runtimeId, executing])
+
+  // 同步执行状态到 Tab 标题（显示进度小圆点）
+  // 只在 executing 状态变化时更新，避免无限循环
+  const tabId = tab?.id
+  const prevExecuting = useRef(false)
+  useEffect(() => {
+    if (!tabId) return
+    if (prevExecuting.current !== executing) {
+      prevExecuting.current = executing
+      updateTab(tabId, { dirty: executing })
+    }
+  }, [executing, tabId, updateTab])
 
   const handleCompare = useCallback(async () => {
     if (!leftConfig || !rightConfig || !leftDatabase || !rightDatabase) return
@@ -126,6 +180,7 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
     const lines: string[] = []
     lines.push(`-- 数据库同步: ${leftConfig?.name}.${leftDatabase} → ${rightConfig?.name}.${rightDatabase}`)
     lines.push(`-- 生成时间: ${new Date().toISOString()}`)
+    lines.push(`-- 模式: ${syncMode === 'data' ? '结构+数据同步' : '仅结构同步'}`)
     lines.push('SET FOREIGN_KEY_CHECKS = 0;')
     lines.push('')
 
@@ -162,36 +217,75 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
     }
 
     lines.push('SET FOREIGN_KEY_CHECKS = 1;')
+
+    // 数据同步模式：显示将要同步数据的表列表
+    if (syncMode === 'data') {
+      lines.push('')
+      lines.push('-- ===== 数据同步 =====')
+      const dataTables = tableDiffs.filter((td) => td.status !== 'right-only')
+      lines.push(`-- 将同步 ${dataTables.length} 个表的数据:`)
+      for (const td of dataTables) {
+        lines.push(`--   TRUNCATE + INSERT: ${td.name}`)
+      }
+    }
+
     return lines.join('\n')
-  }, [compared, tableDiffs, leftConfig, leftDatabase, rightConfig, rightDatabase])
+  }, [compared, tableDiffs, leftConfig, leftDatabase, rightConfig, rightDatabase, syncMode])
 
   const diffCount = tableDiffs.filter((d) => d.status !== 'same').length
 
   const handleExecute = useCallback(async () => {
     if (!rightConfig || !rightDatabase || !syncSQL) return
-    if (!confirm(`确定要将 "${leftDatabase}" 的结构同步到 "${rightDatabase}" 吗？\n目标数据库将被修改，此操作不可恢复！`)) return
+    if (!leftConfig || !leftDatabase) return
+
+    const modeLabel = syncMode === 'data' ? '结构+数据' : '结构'
+    if (!confirm(`确定要将 "${leftDatabase}" 的${modeLabel}同步到 "${rightDatabase}" 吗？\n目标数据库将被修改，此操作不可恢复！`)) return
+
+    // 初始化模块级运行时
+    const r = syncRuntimes.get(runtimeId.current)!
+    r.executing = true
+    r.progress = '正在同步表结构...'
+    r.result = null
+    r.abort = false
 
     setExecuting(true)
     setExecResult(null)
+    setExecProgress('正在同步表结构...')
     const failed: string[] = []
     let success = 0
 
+    // 快照配置到本地变量，避免组件卸载后引用失效
+    const _leftConfig = leftConfig
+    const _rightConfig = rightConfig
+    const _leftDatabase = leftDatabase
+    const _rightDatabase = rightDatabase
+    const _tableDiffs = [...tableDiffs]
+    const _syncMode = syncMode
+
+    // 更新进度的辅助函数（同时写运行时和 React state）
+    const updateProgress = (msg: string) => {
+      r.progress = msg
+      setExecProgress(msg)
+    }
+
     try {
-      for (const td of tableDiffs) {
+      // Phase 1: 结构同步（两种模式都执行）
+      for (const td of _tableDiffs) {
+        if (r.abort) break
         if (td.status === 'same') continue
 
         let sql = ''
         if (td.status === 'left-only' && td.ddl) {
           sql = `DROP TABLE IF EXISTS \`${td.name}\`;`
-          let res = await window.api.db.query(rightConfig, sql, rightDatabase)
+          let res = await window.api.db.query(_rightConfig, sql, _rightDatabase)
           if (res.success) { success++ } else { failed.push(`${td.name}: ${res.error}`) }
 
           sql = td.ddl
-          res = await window.api.db.query(rightConfig, sql, rightDatabase)
+          res = await window.api.db.query(_rightConfig, sql, _rightDatabase)
           if (res.success) { success++ } else { failed.push(`${td.name}: ${res.error}`) }
         } else if (td.status === 'right-only') {
           sql = `DROP TABLE IF EXISTS \`${td.name}\``
-          const res = await window.api.db.query(rightConfig, sql, rightDatabase)
+          const res = await window.api.db.query(_rightConfig, sql, _rightDatabase)
           if (res.success) { success++ } else { failed.push(`${td.name}: ${res.error}`) }
         } else if (td.status === 'different') {
           const parts: string[] = []
@@ -206,18 +300,83 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
           }
           if (parts.length > 0) {
             sql = `ALTER TABLE \`${td.name}\`\n${parts.join(',\n')}`
-            const res = await window.api.db.query(rightConfig, sql, rightDatabase)
+            const res = await window.api.db.query(_rightConfig, sql, _rightDatabase)
             if (res.success) { success++ } else { failed.push(`${td.name}: ${res.error}`) }
           }
         }
       }
+
+      // Phase 2: 数据同步（仅 data 模式）
+      if (_syncMode === 'data' && !r.abort) {
+        // 获取源库中所有需要同步数据的表（结构一致或新建的）
+        const tablesWithData = _tableDiffs.filter(
+          (td) => td.status === 'same' || td.status === 'different' || td.status === 'left-only'
+        )
+
+        for (let i = 0; i < tablesWithData.length; i++) {
+          if (r.abort) break
+          const td = tablesWithData[i]
+          updateProgress(`同步数据 (${i + 1}/${tablesWithData.length}): ${td.name}...`)
+
+          try {
+            // 获取源表数据
+            const dataRes = await window.api.db.query(_leftConfig, `SELECT * FROM \`${td.name}\``, _leftDatabase)
+            if (!dataRes.success || !dataRes.data || dataRes.data.rows.length === 0) continue
+
+            const cols = (dataRes.data.columns ?? []).map((c) => c.name)
+            const rows = dataRes.data.rows
+
+            // 清空目标表数据
+            await window.api.db.query(_rightConfig, `SET FOREIGN_KEY_CHECKS = 0; TRUNCATE TABLE \`${td.name}\`; SET FOREIGN_KEY_CHECKS = 1;`, _rightDatabase)
+
+            // 批量 INSERT（每 100 行一批）
+            const INSERT_BATCH = 100
+            for (let rr = 0; rr < rows.length; rr += INSERT_BATCH) {
+              if (r.abort) break
+              const batch = rows.slice(rr, rr + INSERT_BATCH)
+              const valuesParts = batch.map((row) => {
+                const vals = cols.map((c) => {
+                  const v = row[c]
+                  if (v === null || v === undefined) return 'NULL'
+                  if (typeof v === 'number') return String(v)
+                  if (typeof v === 'boolean') return v ? '1' : '0'
+                  if (v instanceof Uint8Array) {
+                    const hex = Array.from(v).map((b) => b.toString(16).padStart(2, '0')).join('')
+                    return `X'${hex}'`
+                  }
+                  return `'${String(v).replace(/'/g, "''")}'`
+                })
+                return `(${vals.join(', ')})`
+              })
+              const insertSql = `INSERT INTO \`${td.name}\` (\`${cols.join('`, `')}\`) VALUES\n${valuesParts.join(',\n')}`
+              const insertRes = await window.api.db.query(_rightConfig, insertSql, _rightDatabase)
+              if (insertRes.success) {
+                success++
+              } else {
+                failed.push(`${td.name} 数据插入失败: ${insertRes.error}`)
+              }
+            }
+          } catch (err) {
+            failed.push(`${td.name} 数据同步异常: ${(err as Error).message}`)
+          }
+        }
+      }
+
+      r.progress = null
+      r.result = { success, failed }
+      r.executing = false
+      setExecProgress(null)
       setExecResult({ success, failed })
     } catch (err) {
+      r.progress = null
+      r.result = { success, failed: [...failed, (err as Error).message] }
+      r.executing = false
+      setExecProgress(null)
       setExecResult({ success, failed: [...failed, (err as Error).message] })
     } finally {
       setExecuting(false)
     }
-  }, [rightConfig, rightDatabase, syncSQL, tableDiffs, leftDatabase])
+  }, [rightConfig, rightDatabase, syncSQL, tableDiffs, leftConfig, leftDatabase, syncMode, runtimeId])
 
   const handleCopySQL = useCallback(() => {
     navigator.clipboard.writeText(syncSQL)
@@ -227,14 +386,47 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
 
   const sel = "px-1.5 py-1 bg-bg-primary border border-border-light rounded text-[11px] text-text-primary focus:outline-none focus:border-accent"
 
+  const handleClose = useCallback(() => {
+    if (executing) {
+      if (!confirm('同步正在执行中，关闭后后台仍会继续。确定关闭吗？')) return
+    }
+    onClose()
+  }, [executing, onClose])
+
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-bg-secondary border border-border rounded-lg shadow-2xl w-[90vw] h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="flex flex-col flex-1 min-h-0 bg-bg-secondary">
         {/* 标题栏 */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border-light flex-shrink-0">
           <ArrowLeftRight size={16} className="text-accent" />
-          <span className="text-sm font-semibold text-text-primary">数据库结构同步</span>
-          <button onClick={onClose} className="ml-auto p-1 hover:bg-bg-hover rounded text-text-muted">
+          <span className="text-sm font-semibold text-text-primary">数据库同步</span>
+
+          {/* 同步模式切换 */}
+          <div className="flex items-center gap-0.5 ml-3 bg-bg-tertiary rounded p-0.5">
+            <button
+              onClick={() => setSyncMode('structure')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                syncMode === 'structure'
+                  ? 'bg-accent text-white'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              <Database size={11} />
+              结构同步
+            </button>
+            <button
+              onClick={() => setSyncMode('data')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                syncMode === 'data'
+                  ? 'bg-accent text-white'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              <Table2 size={11} />
+              结构+数据同步
+            </button>
+          </div>
+
+          <button onClick={handleClose} className="ml-auto p-1 hover:bg-bg-hover rounded text-text-muted">
             <X size={16} />
           </button>
         </div>
@@ -292,7 +484,11 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
               <div className="flex flex-col items-center justify-center h-full text-text-muted text-sm gap-3">
                 <Database size={48} className="opacity-20" />
                 <p>选择源数据库和目标数据库后点击「开始比较」</p>
-                <p className="text-xs text-text-muted">同步将修改目标数据库以匹配源数据库的结构</p>
+                <p className="text-xs text-text-muted">
+                  {syncMode === 'structure'
+                    ? '同步将修改目标数据库以匹配源数据库的结构'
+                    : '同步将修改目标数据库的结构并复制所有表数据'}
+                </p>
               </div>
             )}
 
@@ -417,14 +613,24 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
                   </button>
                   <button
                     onClick={handleExecute}
-                    disabled={executing || diffCount === 0}
+                    disabled={executing || (syncMode === 'structure' && diffCount === 0) || tableDiffs.length === 0}
                     className="flex items-center gap-1 px-3 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-[11px] font-medium transition-colors disabled:opacity-40"
                   >
                     {executing ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-                    {executing ? '执行中...' : '执行同步'}
+                    {executing ? '执行中...' : syncMode === 'data' ? '执行结构+数据同步' : '执行同步'}
                   </button>
                 </div>
               </div>
+
+              {/* 执行进度 */}
+              {execProgress && (
+                <div className="px-3 py-2 border-b border-border-light bg-accent/10">
+                  <span className="flex items-center gap-2 text-xs text-accent">
+                    <Loader2 size={12} className="animate-spin" />
+                    {execProgress}
+                  </span>
+                </div>
+              )}
 
               {/* 执行结果 */}
               {execResult && (
@@ -455,7 +661,6 @@ export default function DatabaseSyncView({ onClose, initialConfig, initialDataba
             </div>
           )}
         </div>
-      </div>
     </div>
   )
 }
@@ -495,7 +700,22 @@ function compareColumns(leftCols: ColumnInfo[], rightCols: ColumnInfo[]): Column
 
 function colToDef(col: ColumnInfo): string {
   const nullable = col.nullable ? 'NULL' : 'NOT NULL'
-  const def = col.defaultValue !== null && col.defaultValue !== undefined ? `DEFAULT ${col.defaultValue}` : ''
+  let def = ''
+  if (col.defaultValue !== null && col.defaultValue !== undefined) {
+    const dv = String(col.defaultValue)
+    // SQL 函数/常量/数字不加引号
+    const sqlFunctions = new Set([
+      'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME',
+      'NOW()', 'NULL', 'true', 'false'
+    ])
+    const isNumeric = /^-?\d+(\.\d+)?$/.test(dv)
+    const isSqlFunc = sqlFunctions.has(dv.toUpperCase()) || dv.toUpperCase().includes('(')
+    if (isNumeric || isSqlFunc) {
+      def = `DEFAULT ${dv}`
+    } else {
+      def = `DEFAULT '${dv.replace(/'/g, "''")}'`
+    }
+  }
   const extra = col.extra ?? ''
   return `\`${col.name}\` ${col.type} ${nullable} ${def} ${extra}`.replace(/\s+/g, ' ').trim()
 }

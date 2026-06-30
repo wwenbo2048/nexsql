@@ -89,7 +89,7 @@ const api = {
       ipcRenderer.on('db:backupProgress', handler)
       return () => { ipcRenderer.removeListener('db:backupProgress', handler) }
     },
-    onRestoreProgress: (callback: (data: { operationId: string; current: number; total: number }) => void) => {
+    onRestoreProgress: (callback: (data: { operationId: string; current: number; total: number; executed?: number }) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on('db:restoreProgress', handler)
       return () => { ipcRenderer.removeListener('db:restoreProgress', handler) }

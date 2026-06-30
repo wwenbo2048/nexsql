@@ -109,15 +109,30 @@ export async function executeQuery(
 
     // 处理查询结果
     if (Array.isArray(result)) {
+      // 多语句 DDL/DML（如 SET; DROP; SET;）的 fields 含有 undefined/null
+      const fieldPackets = fields as (FieldPacket | undefined | null)[]
+      if (!fieldPackets || fieldPackets.some(f => f == null)) {
+        // 多语句非查询操作：取最后一个结果
+        const lastResult = result[result.length - 1] as { affectedRows?: number; insertId?: number; changedRows?: number }
+        return {
+          columns: [],
+          rows: [],
+          affectedRows: lastResult?.affectedRows ?? 0,
+          insertId: lastResult?.insertId,
+          changedRows: lastResult?.changedRows,
+          duration
+        }
+      }
+
       // SELECT 查询
       const rows = result as RowDataPacket[]
-      const fieldPackets = fields as FieldPacket[]
+      const selectFields = fields as FieldPacket[]
 
       return {
-        columns: fieldPackets.map((f) => ({
+        columns: selectFields.map((f) => ({
           name: f.name,
           type: f.type !== undefined ? String(f.type) : 'unknown',
-          nullable: (f.flags & 0x0001) === 0
+          nullable: (typeof f.flags === 'number' ? (f.flags & 0x0001) === 0 : true)
         })),
         rows: rows as Record<string, unknown>[],
         affectedRows: rows.length,

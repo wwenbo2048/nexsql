@@ -27,7 +27,6 @@ import { useBrowserStore, type DbCategory } from '@stores/browser'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useTabStore } from '@stores/tab'
 import type { ConnectionConfig, DatabaseInfo, TableInfo } from '@shared/types'
-import DatabaseSyncView from './DatabaseSyncView'
 
 // Redis 连接节点缓存
 const redisConnected = new Set<string>()
@@ -59,13 +58,14 @@ export default function ConnectionTree() {
   const [dbModal, setDbModal] = useState<{ mode: 'create' | 'delete'; config: ConnectionConfig; dbName?: string; name: string; charset: string; collation: string } | null>(null)
   // 备份/恢复进度弹窗
   const [opProgress, setOpProgress] = useState<{ type: 'backup' | 'restore'; dbName: string; current: number; total: number; label: string; operationId: string } | null>(null)
-  // 数据库同步弹窗
-  const [syncModal, setSyncModal] = useState<{ config: ConnectionConfig; dbName: string } | null>(null)
   const operationIdRef = useRef<string>('')
   const selectDatabase = useBrowserStore((s) => s.selectDatabase)
   const selectCategory = useBrowserStore((s) => s.selectCategory)
   const selectTable = useBrowserStore((s) => s.selectTable)
+  const selectedConnectionId = useBrowserStore((s) => s.selectedConnectionId)
+  const selectedDatabase = useBrowserStore((s) => s.selectedDatabase)
   const openRedisBrowser = useTabStore((s) => s.openRedisBrowser)
+  const openDbSync = useTabStore((s) => s.openDbSync)
 
   const handleConnect = useCallback(
     async (config: ConnectionConfig) => {
@@ -125,27 +125,10 @@ export default function ConnectionTree() {
 
   const handleToggleDatabase = useCallback(
     async (config: ConnectionConfig, db: DatabaseInfo) => {
-      const dbKey = `${config.id}:${db.name}`
-      const isExpanded = expandedConnections.has(dbKey)
-      toggleExpand(dbKey)
       // 联动中间面板
       selectDatabase(config.id, db.name)
-      if (!isExpanded) {
-        // 加载表列表（用于左侧树展示表名）
-        const cached = nodeCache.get(config.id)
-        if (!cached?.tables?.[db.name]) {
-          const res = await window.api.db.getTables(config, db.name)
-          if (res.success && res.data) {
-            nodeCache.set(config.id, {
-              ...cached,
-              tables: { ...(cached?.tables ?? {}), [db.name]: res.data }
-            })
-            forceUpdate({})
-          }
-        }
-      }
     },
-    [expandedConnections, toggleExpand, selectDatabase]
+    [selectDatabase]
   )
 
   const handleCategoryClick = useCallback(
@@ -289,11 +272,13 @@ export default function ConnectionTree() {
 
         const opId = `restore_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         operationIdRef.current = opId
-        setOpProgress({ type: 'restore', dbName, current: 0, total: 100, label: '正在执行 SQL...', operationId: opId })
+        setOpProgress({ type: 'restore', dbName, current: 0, total: 100, label: '正在读取并执行 SQL...', operationId: opId })
 
         const unsub = window.api.db.onRestoreProgress((data) => {
           if (data.operationId !== opId) return
-          setOpProgress({ type: 'restore', dbName, current: data.current, total: data.total, label: `正在执行语句 ${data.current}/${data.total}`, operationId: opId })
+          const pct = data.total > 0 ? Math.round((data.current / data.total) * 100) : 0
+          const execLabel = data.executed != null ? `，已执行 ${data.executed} 条` : ''
+          setOpProgress({ type: 'restore', dbName, current: pct, total: 100, label: `正在恢复... ${pct}%${execLabel}`, operationId: opId })
         })
 
         // 直接传文件路径，主进程读取文件（避免大文件通过 IPC 传输截断）
@@ -509,14 +494,15 @@ export default function ConnectionTree() {
         {isExpanded && status === 'connected' && config.type !== 'redis' && cached?.databases && (
           <div className="ml-4">
             {cached.databases.map((db) => {
-              const dbKey = `${config.id}:${db.name}`
-              const dbExpanded = expandedConnections.has(dbKey)
-              const tables = cached.tables?.[db.name]
-
+              const isActive = selectedConnectionId === config.id && selectedDatabase === db.name
               return (
                 <div key={db.name}>
                   <div
-                    className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
+                    className={`flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-colors ${
+                      isActive
+                        ? 'bg-accent/15 border-l-2 border-l-accent'
+                        : 'hover:bg-bg-hover border-l-2 border-l-transparent'
+                    }`}
                     onClick={() => handleToggleDatabase(config, db)}
                     onContextMenu={(e) => {
                       e.preventDefault()
@@ -531,7 +517,7 @@ export default function ConnectionTree() {
                           { label: '备份（仅结构）', onClick: () => handleBackupDatabase(config, db.name, 'structure') },
                           { label: '备份（仅数据）', onClick: () => handleBackupDatabase(config, db.name, 'data') },
                           { label: '恢复数据库', onClick: () => handleRestoreDatabase(config, db.name) },
-                          { label: '数据库同步', onClick: () => setSyncModal({ config, dbName: db.name }) },
+                          { label: '数据库同步', onClick: () => openDbSync(config.id, db.name) },
                           { label: '', separator: true },
                           { label: '复制数据库名', onClick: () => navigator.clipboard.writeText(db.name) },
                           { label: '', separator: true },
@@ -540,52 +526,9 @@ export default function ConnectionTree() {
                       })
                     }}
                   >
-                    {dbExpanded ? (
-                      <ChevronDown size={12} className="text-text-muted" />
-                    ) : (
-                      <ChevronRight size={12} className="text-text-muted" />
-                    )}
-                    <DatabaseIcon size={14} className="text-accent-light flex-shrink-0" />
-                    <span className="flex-1 truncate text-text-primary/90">{db.name}</span>
+                    <DatabaseIcon size={14} className={`flex-shrink-0 ${isActive ? 'text-accent' : 'text-accent-light'}`} />
+                    <span className={`flex-1 truncate ${isActive ? 'text-text-primary font-semibold' : 'text-text-primary/90'}`}>{db.name}</span>
                   </div>
-
-                  {/* 展开后显示分类（表/视图/函数/事件） */}
-                  {dbExpanded && (
-                    <div className="ml-4">
-                      {CATEGORIES.map((cat) => {
-                        const tablesOnly = cat.key === 'tables'
-                          ? tables?.filter((t) => t.type === 'table').length ?? 0
-                          : 0
-                        const viewsCount = cat.key === 'views'
-                          ? tables?.filter((t) => t.type === 'view').length ?? 0
-                          : 0
-
-                        return (
-                          <div key={cat.key}>
-                            {/* 分类节点 */}
-                            <div
-                              className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover"
-                              onClick={() => handleCategoryClick(config, db, cat.key)}
-                            >
-                              <cat.icon size={13} className={`flex-shrink-0 ${
-                                cat.key === 'tables' ? 'text-blue-400' :
-                                cat.key === 'views' ? 'text-purple-400' :
-                                cat.key === 'functions' ? 'text-orange-400' :
-                                'text-green-400'
-                              }`} />
-                              <span className="flex-1 truncate text-text-secondary">{cat.label}</span>
-                              {cat.key === 'tables' && tablesOnly > 0 && (
-                                <span className="text-[9px] text-text-muted">{tablesOnly}</span>
-                              )}
-                              {cat.key === 'views' && viewsCount > 0 && (
-                                <span className="text-[9px] text-text-muted">{viewsCount}</span>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
                 </div>
               )
             })}
@@ -724,14 +667,6 @@ export default function ConnectionTree() {
         </div>
       )}
 
-      {/* 数据库同步弹窗 */}
-      {syncModal && (
-        <DatabaseSyncView
-          onClose={() => setSyncModal(null)}
-          initialConfig={syncModal.config}
-          initialDatabase={syncModal.dbName}
-        />
-      )}
     </>
   )
 }
