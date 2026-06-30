@@ -3,12 +3,15 @@ import TabBar from './TabBar'
 import QueryEditor from './QueryEditor'
 import DataTable from './DataTable'
 import TableDesign from './TableDesign'
+import RedisBrowser from './RedisBrowser'
 import { Terminal, Database } from 'lucide-react'
+import { useConnectionStore } from '@stores/connection'
 
 export default function MainContent() {
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const activeTab = tabs.find((t) => t.id === activeTabId)
+  const connections = useConnectionStore((s) => s.connections)
 
   if (!activeTab) {
     return (
@@ -27,6 +30,10 @@ export default function MainContent() {
         {activeTab.type === 'query' && <QueryEditor tab={activeTab} />}
         {activeTab.type === 'table-data' && <DataTable tab={activeTab} />}
         {activeTab.type === 'table-design' && <TableDesign tab={activeTab} />}
+        {activeTab.type === 'redis-browser' && (() => {
+          const conn = connections.find((c) => c.id === activeTab.connectionId)
+          return conn ? <RedisBrowser config={conn} onClose={() => useTabStore.getState().closeTab(activeTab.id)} /> : null
+        })()}
       </div>
     </div>
   )

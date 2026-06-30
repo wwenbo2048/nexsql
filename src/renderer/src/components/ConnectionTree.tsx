@@ -19,13 +19,18 @@ import {
   HardDriveDownload,
   HardDriveUpload,
   Tag,
-  FolderOpen
+  FolderOpen,
+  KeyRound
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useBrowserStore, type DbCategory } from '@stores/browser'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useTabStore } from '@stores/tab'
 import type { ConnectionConfig, DatabaseInfo, TableInfo } from '@shared/types'
+import DatabaseSyncView from './DatabaseSyncView'
+
+// Redis 连接节点缓存
+const redisConnected = new Set<string>()
 
 // 树节点数据缓存
 interface NodeData {
@@ -54,14 +59,31 @@ export default function ConnectionTree() {
   const [dbModal, setDbModal] = useState<{ mode: 'create' | 'delete'; config: ConnectionConfig; dbName?: string; name: string; charset: string; collation: string } | null>(null)
   // 备份/恢复进度弹窗
   const [opProgress, setOpProgress] = useState<{ type: 'backup' | 'restore'; dbName: string; current: number; total: number; label: string; operationId: string } | null>(null)
+  // 数据库同步弹窗
+  const [syncModal, setSyncModal] = useState<{ config: ConnectionConfig; dbName: string } | null>(null)
   const operationIdRef = useRef<string>('')
   const selectDatabase = useBrowserStore((s) => s.selectDatabase)
   const selectCategory = useBrowserStore((s) => s.selectCategory)
   const selectTable = useBrowserStore((s) => s.selectTable)
+  const openRedisBrowser = useTabStore((s) => s.openRedisBrowser)
 
   const handleConnect = useCallback(
     async (config: ConnectionConfig) => {
       setStatus(config.id, 'connecting')
+      if (config.type === 'redis') {
+        const res = await window.api.redis.connect(config)
+        if (res.success) {
+          setStatus(config.id, 'connected')
+          redisConnected.add(config.id)
+          toggleExpand(config.id)
+          forceUpdate({})
+          // 自动打开 Redis 浏览器
+          openRedisBrowser(config.id)
+        } else {
+          setStatus(config.id, 'error', res.error)
+        }
+        return
+      }
       const res = await window.api.db.connect(config)
       if (res.success) {
         setStatus(config.id, 'connected')
@@ -76,7 +98,7 @@ export default function ConnectionTree() {
         setStatus(config.id, 'error', res.error)
       }
     },
-    [setStatus, toggleExpand]
+    [setStatus, toggleExpand, openRedisBrowser]
   )
 
   const handleToggleConnection = useCallback(
@@ -86,7 +108,12 @@ export default function ConnectionTree() {
         await handleConnect(config)
       } else {
         // 断开
-        await window.api.db.disconnect(config.id)
+        if (config.type === 'redis') {
+          await window.api.redis.disconnect(config.id)
+          redisConnected.delete(config.id)
+        } else {
+          await window.api.db.disconnect(config.id)
+        }
         setStatus(config.id, 'disconnected')
         nodeCache.delete(config.id)
         toggleExpand(config.id)
@@ -320,11 +347,15 @@ export default function ConnectionTree() {
           onClick: () => handleToggleConnection(config)
         },
         { label: '', separator: true },
-        ...(isConnected ? [{
+        ...(isConnected && config.type !== 'redis' ? [{
           label: '新建数据库',
           onClick: () => handleCreateDatabase(config)
         }] : []),
-        { label: '新建查询', onClick: () => handleNewQuery(config) },
+        ...(isConnected && config.type === 'redis' ? [{
+          label: '打开 Redis 浏览器',
+          onClick: () => openRedisBrowser(config.id)
+        }] : []),
+        ...(config.type !== 'redis' ? [{ label: '新建查询', onClick: () => handleNewQuery(config) }] : []),
         {
           label: '编辑连接',
           onClick: () => openConnectionModal(config.id)
@@ -418,13 +449,17 @@ export default function ConnectionTree() {
           )}
 
           {status === 'connected' ? (
-            <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
+            config.type === 'redis'
+              ? <KeyRound size={14} className="text-red-400 flex-shrink-0" />
+              : <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
           ) : status === 'connecting' ? (
             <CheckCircle2 size={14} className="text-yellow-500 flex-shrink-0" />
           ) : status === 'error' ? (
             <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
           ) : (
-            <Circle size={14} className="text-text-muted flex-shrink-0" />
+            config.type === 'redis'
+              ? <KeyRound size={14} className="text-red-400/40 flex-shrink-0" />
+              : <Circle size={14} className="text-text-muted flex-shrink-0" />
           )}
 
           <span className="flex-1 truncate text-text-primary">{config.name}</span>
@@ -457,8 +492,21 @@ export default function ConnectionTree() {
           </div>
         )}
 
-        {/* 数据库列表 */}
-        {isExpanded && status === 'connected' && cached?.databases && (
+        {/* Redis 连接展开 */}
+        {isExpanded && status === 'connected' && config.type === 'redis' && (
+          <div className="ml-4">
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-bg-hover text-red-400"
+              onClick={() => openRedisBrowser(config.id)}
+            >
+              <KeyRound size={13} className="flex-shrink-0" />
+              <span className="flex-1 truncate text-xs">打开 Redis 浏览器</span>
+            </div>
+          </div>
+        )}
+
+        {/* 数据库列表（仅 MySQL） */}
+        {isExpanded && status === 'connected' && config.type !== 'redis' && cached?.databases && (
           <div className="ml-4">
             {cached.databases.map((db) => {
               const dbKey = `${config.id}:${db.name}`
@@ -483,6 +531,7 @@ export default function ConnectionTree() {
                           { label: '备份（仅结构）', onClick: () => handleBackupDatabase(config, db.name, 'structure') },
                           { label: '备份（仅数据）', onClick: () => handleBackupDatabase(config, db.name, 'data') },
                           { label: '恢复数据库', onClick: () => handleRestoreDatabase(config, db.name) },
+                          { label: '数据库同步', onClick: () => setSyncModal({ config, dbName: db.name }) },
                           { label: '', separator: true },
                           { label: '复制数据库名', onClick: () => navigator.clipboard.writeText(db.name) },
                           { label: '', separator: true },
@@ -673,6 +722,15 @@ export default function ConnectionTree() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 数据库同步弹窗 */}
+      {syncModal && (
+        <DatabaseSyncView
+          onClose={() => setSyncModal(null)}
+          initialConfig={syncModal.config}
+          initialDatabase={syncModal.dbName}
+        />
       )}
     </>
   )

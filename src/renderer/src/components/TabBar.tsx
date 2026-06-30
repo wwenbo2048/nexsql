@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { X, Terminal, Table as TableIcon, Eye, Network, FolderTree, Plus } from 'lucide-react'
+import { X, Terminal, Table as TableIcon, Eye, Network, FolderTree, Plus, KeyRound } from 'lucide-react'
 import { useTabStore } from '@stores/tab'
 import { useBrowserStore } from '@stores/browser'
 import type { Tab } from '@shared/types'
@@ -86,6 +86,7 @@ export default function TabBar() {
     if (tab.type === 'table-data') return <TableIcon size={size} className="text-blue-400" />
     if (tab.type === 'table-design') return <Eye size={size} className="text-purple-400" />
     if (tab.type === 'er') return <Network size={size} className="text-green-400" />
+    if (tab.type === 'redis-browser') return <KeyRound size={size} className="text-red-400" />
     return null
   }
 

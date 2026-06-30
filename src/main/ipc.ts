@@ -6,6 +6,7 @@ import { uuidv4 } from './uuid'
 import { encryptPassword, decryptPassword } from './crypto'
 import type { ConnectionConfig, IpcResponse } from '../shared/types'
 import * as db from './services/db'
+import * as redis from './services/redis'
 
 const store = new Store<{
   connections: ConnectionConfig[]
@@ -558,6 +559,140 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
         return { success: true, data: { canceled: false, content, path: result.filePaths[0] } }
       } catch (err) {
         logError('file:openDialog', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  // ==================== Redis 操作 ====================
+
+  ipcMain.handle('redis:testConnection',
+    async (_event, config: ConnectionConfig) => {
+      try {
+        await redis.testRedisConnection(config)
+        return { success: true }
+      } catch (err) {
+        logError('redis:testConnection', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:connect',
+    async (_event, config: ConnectionConfig) => {
+      try {
+        await redis.getClient(config)
+        return { success: true }
+      } catch (err) {
+        logError('redis:connect', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:disconnect',
+    async (_event, configId: string) => {
+      try {
+        await redis.disconnectRedis(configId)
+        return { success: true }
+      } catch (err) {
+        logError('redis:disconnect', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:dbsize',
+    async (_event, config: ConnectionConfig) => {
+      try {
+        const size = await redis.getDbSize(config)
+        return { success: true, data: size }
+      } catch (err) {
+        logError('redis:dbsize', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:scan',
+    async (_event, config: ConnectionConfig, pattern: string, cursor: number, count?: number) => {
+      try {
+        const result = await redis.scanKeys(config, pattern, cursor, count ?? 200)
+        return { success: true, data: result }
+      } catch (err) {
+        logError('redis:scan', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:getKey',
+    async (_event, config: ConnectionConfig, key: string) => {
+      try {
+        const detail = await redis.getKeyDetail(config, key)
+        return { success: true, data: detail }
+      } catch (err) {
+        logError('redis:getKey', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:setKey',
+    async (_event, config: ConnectionConfig, key: string, type: string, value: string, ttl?: number) => {
+      try {
+        await redis.setKeyValue(config, key, type as any, value, ttl)
+        return { success: true }
+      } catch (err) {
+        logError('redis:setKey', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:deleteKey',
+    async (_event, config: ConnectionConfig, key: string) => {
+      try {
+        await redis.deleteKey(config, key)
+        return { success: true }
+      } catch (err) {
+        logError('redis:deleteKey', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:setTtl',
+    async (_event, config: ConnectionConfig, key: string, ttl: number) => {
+      try {
+        await redis.setTtl(config, key, ttl)
+        return { success: true }
+      } catch (err) {
+        logError('redis:setTtl', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:rename',
+    async (_event, config: ConnectionConfig, oldKey: string, newKey: string) => {
+      try {
+        await redis.renameKey(config, oldKey, newKey)
+        return { success: true }
+      } catch (err) {
+        logError('redis:rename', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('redis:command',
+    async (_event, config: ConnectionConfig, command: string[]) => {
+      try {
+        const result = await redis.executeCommand(config, command)
+        return { success: true, data: result }
+      } catch (err) {
+        logError('redis:command', err)
         return { success: false, error: getFullErrorMessage(err) }
       }
     }

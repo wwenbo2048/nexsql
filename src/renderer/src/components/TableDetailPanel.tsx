@@ -242,7 +242,7 @@ export default function TableDetailPanel() {
                 </div>
               ) : ddl ? (
                 <>
-                  <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed"><SqlHighlight sql={ddl} /></pre>
+                  <pre className="text-xs font-mono whitespace-pre leading-relaxed overflow-x-auto"><SqlHighlight sql={ddl} /></pre>
 
                   {/* 触发器 DDL */}
                   {triggers.length > 0 && (
@@ -257,7 +257,7 @@ export default function TableDetailPanel() {
                             <span className="text-[10px] px-1.5 py-0.5 bg-yellow-900/40 text-yellow-400 rounded font-mono">{trg.timing} {trg.event}</span>
                             <span className="text-xs font-mono text-accent">{trg.name}</span>
                           </div>
-                          <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed pl-3 border-l-2 border-border-light"><SqlHighlight sql={`CREATE TRIGGER \`${trg.name}\` ${trg.timing} ${trg.event} ON \`${selectedTable}\` FOR EACH ROW ${trg.statement}`} /></pre>
+                          <pre className="text-xs font-mono whitespace-pre leading-relaxed pl-3 border-l-2 border-border-light overflow-x-auto"><SqlHighlight sql={`CREATE TRIGGER \`${trg.name}\` ${trg.timing} ${trg.event} ON \`${selectedTable}\` FOR EACH ROW ${trg.statement}`} /></pre>
                         </div>
                       ))}
                     </div>

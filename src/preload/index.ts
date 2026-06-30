@@ -13,7 +13,9 @@ import type {
   RoutineInfo,
   EventInfo,
   QueryResult,
-  IpcResponse
+  IpcResponse,
+  RedisKeyInfo,
+  RedisKeyValue
 } from '../shared/types'
 
 // ==================== API 接口定义 ====================
@@ -104,6 +106,32 @@ const api = {
       ipcRenderer.invoke('file:writeToFile', filePath, content),
     openDialog: (filterExt?: string): Promise<IpcResponse<{ canceled: boolean; content: string; path?: string }>> =>
       ipcRenderer.invoke('file:openDialog', filterExt)
+  },
+
+  // Redis 操作
+  redis: {
+    testConnection: (config: ConnectionConfig): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:testConnection', config),
+    connect: (config: ConnectionConfig): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:connect', config),
+    disconnect: (configId: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:disconnect', configId),
+    dbsize: (config: ConnectionConfig): Promise<IpcResponse<number>> =>
+      ipcRenderer.invoke('redis:dbsize', config),
+    scan: (config: ConnectionConfig, pattern: string, cursor: number, count?: number): Promise<IpcResponse<{ cursor: number; keys: RedisKeyInfo[] }>> =>
+      ipcRenderer.invoke('redis:scan', config, pattern, cursor, count),
+    getKey: (config: ConnectionConfig, key: string): Promise<IpcResponse<RedisKeyValue>> =>
+      ipcRenderer.invoke('redis:getKey', config, key),
+    setKey: (config: ConnectionConfig, key: string, type: string, value: string, ttl?: number): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:setKey', config, key, type, value, ttl),
+    deleteKey: (config: ConnectionConfig, key: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:deleteKey', config, key),
+    setTtl: (config: ConnectionConfig, key: string, ttl: number): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:setTtl', config, key, ttl),
+    rename: (config: ConnectionConfig, oldKey: string, newKey: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:rename', config, oldKey, newKey),
+    command: (config: ConnectionConfig, command: string[]): Promise<IpcResponse> =>
+      ipcRenderer.invoke('redis:command', config, command)
   }
 }
 

@@ -1,10 +1,12 @@
 import { useTabStore } from '@stores/tab'
+import { useConnectionStore } from '@stores/connection'
 import TabBar from './TabBar'
 import MiddlePanel from './MiddlePanel'
 import QueryEditor from './QueryEditor'
 import DataTable from './DataTable'
 import StructureEditor from './StructureEditor'
 import ERDiagramView from './ERDiagramView'
+import RedisBrowser from './RedisBrowser'
 import { Database, Terminal } from 'lucide-react'
 import type { Tab } from '@shared/types'
 
@@ -12,6 +14,7 @@ export default function MiddleArea() {
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const activeTab = tabs.find((t) => t.id === activeTabId)
+  const connections = useConnectionStore((s) => s.connections)
 
   const renderContent = (tab: Tab) => {
     switch (tab.type) {
@@ -41,6 +44,13 @@ export default function MiddleArea() {
           return <ERDiagramView />
         }
         return <EmptyTab icon="er" />
+
+      case 'redis-browser': {
+        const conn = connections.find((c) => c.id === tab.connectionId)
+        return conn
+          ? <RedisBrowser config={conn} onClose={() => useTabStore.getState().closeTab(tab.id)} />
+          : <EmptyTab icon="redis" />
+      }
 
       default:
         return (

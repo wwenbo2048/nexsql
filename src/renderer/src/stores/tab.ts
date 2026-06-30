@@ -50,6 +50,7 @@ interface TabState {
   openQuery: (connectionId: string, database?: string) => void
   openTableDesign: (connectionId: string, database: string, table: string) => void
   openErDiagram: (connectionId: string, database: string) => void
+  openRedisBrowser: (connectionId: string) => void
   /** 确保浏览器 Tab 存在并激活 */
   ensureBrowserTab: () => void
 }
@@ -197,6 +198,15 @@ export const useTabStore = create<TabState>((set, get) => ({
       title: `ER 图 - ${database}`,
       connectionId,
       database
+    })
+  },
+
+  openRedisBrowser: (connectionId) => {
+    get().openTab({
+      id: `redis-${connectionId}`,
+      type: 'redis-browser',
+      title: `Redis`,
+      connectionId
     })
   },
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Plug, Loader2, CheckCircle2, AlertCircle, Lock, Server } from 'lucide-react'
+import { X, Plug, Loader2, CheckCircle2, AlertCircle, Lock, Server, Database as DatabaseIcon } from 'lucide-react'
 import { useUiStore } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
 import type { ConnectionConfig } from '@shared/types'
@@ -44,7 +44,9 @@ export default function ConnectionModal() {
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
-    const res = await window.api.db.testConnection(config)
+    const res = config.type === 'redis'
+      ? await window.api.redis.testConnection(config)
+      : await window.api.db.testConnection(config)
     setTestResult({ ok: res.success, msg: res.success ? '连接成功' : res.error ?? '连接失败' })
     setTesting(false)
   }
@@ -87,6 +89,35 @@ export default function ConnectionModal() {
 
         {/* 表单内容 */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* 连接类型 */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">连接类型</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfig({ ...config, type: 'mysql', port: 3306, user: config.user || 'root' })}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded border transition-colors ${
+                  config.type === 'mysql'
+                    ? 'border-accent bg-accent/10 text-accent'
+                    : 'border-border-light text-text-secondary hover:bg-bg-hover'
+                }`}
+              >
+                <DatabaseIcon size={14} />
+                <span className="text-sm font-medium">MySQL</span>
+              </button>
+              <button
+                onClick={() => setConfig({ ...config, type: 'redis', port: 6379 })}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded border transition-colors ${
+                  config.type === 'redis'
+                    ? 'border-accent bg-accent/10 text-accent'
+                    : 'border-border-light text-text-secondary hover:bg-bg-hover'
+                }`}
+              >
+                <Server size={14} />
+                <span className="text-sm font-medium">Redis</span>
+              </button>
+            </div>
+          </div>
+
           {/* 连接名称 */}
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">
@@ -172,12 +203,12 @@ export default function ConnectionModal() {
           {/* 用户名和密码 */}
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-medium text-text-secondary mb-1">用户名</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">{config.type === 'redis' ? '用户名（可选）' : '用户名'}</label>
               <input
                 type="text"
                 value={config.user}
                 onChange={(e) => setConfig({ ...config, user: e.target.value })}
-                placeholder="root"
+                placeholder={config.type === 'redis' ? 'default' : 'root'}
                 className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
               />
             </div>
@@ -192,17 +223,31 @@ export default function ConnectionModal() {
             </div>
           </div>
 
-          {/* 默认数据库 */}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">默认数据库</label>
-            <input
-              type="text"
-              value={config.database ?? ''}
-              onChange={(e) => setConfig({ ...config, database: e.target.value })}
-              placeholder="可选"
-              className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
-            />
-          </div>
+          {/* 默认数据库 / Redis DB */}
+          {config.type === 'redis' ? (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">数据库索引 (DB)</label>
+              <input
+                type="number"
+                min={0}
+                max={15}
+                value={config.redisDb ?? 0}
+                onChange={(e) => setConfig({ ...config, redisDb: parseInt(e.target.value) || 0 })}
+                className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">默认数据库</label>
+              <input
+                type="text"
+                value={config.database ?? ''}
+                onChange={(e) => setConfig({ ...config, database: e.target.value })}
+                placeholder="可选"
+                className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+              />
+            </div>
+          )}
 
           {/* SSL 开关 */}
           <div className="flex items-center gap-2">

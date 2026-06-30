@@ -5,7 +5,7 @@ export interface ConnectionConfig {
   name: string
   group?: string
   tags?: string[]
-  type: 'mysql'
+  type: 'mysql' | 'redis'
   host: string
   port: number
   user: string
@@ -20,6 +20,8 @@ export interface ConnectionConfig {
   sshPrivateKey?: string
   sslEnabled?: boolean
   connectTimeout?: number
+  // Redis 专用
+  redisDb?: number
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -189,7 +191,7 @@ export interface IpcResponse<T = unknown> {
 
 // ==================== Tab 类型 ====================
 
-export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet'
+export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet' | 'redis-browser'
 
 export interface Tab {
   id: string
@@ -202,4 +204,24 @@ export interface Tab {
   dirty?: boolean
   sql?: string
   savedQueryId?: string
+}
+
+// ==================== Redis 类型 ====================
+
+export type RedisKeyType = 'string' | 'hash' | 'list' | 'set' | 'zset' | 'stream' | 'none'
+
+export interface RedisKeyInfo {
+  key: string
+  type: RedisKeyType
+  ttl: number // -1 = 永久, -2 = 不存在
+  size: number // 元素数量
+}
+
+export interface RedisKeyValue {
+  key: string
+  type: RedisKeyType
+  ttl: number
+  value: string
+  // hash/list/set/zset 的成员
+  members?: { field: string; value: string }[]
 }
