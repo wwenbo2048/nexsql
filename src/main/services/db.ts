@@ -27,7 +27,8 @@ function buildPoolOptions(config: ConnectionConfig, localPort?: number): PoolOpt
     keepAliveInitialDelay: 0,
     charset: 'utf8mb4',
     timezone: '+00:00',
-    dateStrings: true
+    dateStrings: true,
+    multipleStatements: true // 允许恢复数据库时批量执行多条 SQL
   }
   if (config.sslEnabled) {
     opts.ssl = { rejectUnauthorized: false }
