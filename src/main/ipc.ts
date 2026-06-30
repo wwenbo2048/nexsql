@@ -47,10 +47,70 @@ function getFullErrorMessage(err: unknown): string {
   return String(err)
 }
 
-/** 字符串感知的 SQL 语句分割（避免字符串内的分号截断） */
+/**
+ * 字符串感知的 SQL 语句分割（避免字符串内的分号截断）
+ * 支持 DELIMITER 指令（Navicat / mysqldump 导出的存储过程、函数、触发器等）
+ */
 function splitSqlStatements(sql: string): string[] {
+  // Phase 1: 按行处理 DELIMITER 指令，将 SQL 分成多个段，每段有自己的分隔符
+  const segments: { delimiter: string; content: string }[] = []
+  let currentDelimiter = ';'
+  let currentContent = ''
+  let inStr = false // 跨行字符串状态（用于避免字符串内的 DELIMITER 被误判）
+
+  const lines = sql.split('\n')
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    // 只有不在字符串内时才检测 DELIMITER 指令
+    if (!inStr) {
+      const delimMatch = trimmed.match(/^DELIMITER\s+(.+)$/i)
+      if (delimMatch) {
+        // 保存当前段
+        segments.push({ delimiter: currentDelimiter, content: currentContent })
+        currentContent = ''
+        currentDelimiter = delimMatch[1].trim()
+        continue
+      }
+    }
+
+    // 检查此行是否影响字符串状态（粗略检查）
+    if (!inStr) {
+      const singleQuotes = (line.match(/(?<!\\)'/g) || []).length
+      if (singleQuotes % 2 === 1) inStr = true
+    } else {
+      const singleQuotes = (line.match(/(?<!\\)'/g) || []).length
+      if (singleQuotes % 2 === 1) inStr = false
+    }
+
+    currentContent += line + '\n'
+  }
+  segments.push({ delimiter: currentDelimiter, content: currentContent })
+
+  // Phase 2: 对每个段用对应的分隔符分割
   const statements: string[] = []
-  let current = ''; let inSingle = false; let inDouble = false; let inBacktick = false; let inLineComment = false; let inBlockComment = false
+  for (const seg of segments) {
+    if (seg.delimiter === ';') {
+      statements.push(...splitBySemicolon(seg.content))
+    } else {
+      // 自定义分隔符（如 $$, ;;）：直接 split，存储过程体内的 ; 不会被截断
+      const parts = seg.content.split(seg.delimiter)
+      for (const part of parts) {
+        const stmt = part.trim()
+        if (stmt) statements.push(stmt)
+      }
+    }
+  }
+  return statements
+}
+
+/** 标准 ; 分隔符的字符级分割 */
+function splitBySemicolon(sql: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let inSingle = false, inDouble = false, inBacktick = false
+  let inLineComment = false, inBlockComment = false
+
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i]; const next = sql[i + 1]
     if (inLineComment) { if (ch === '\n') { inLineComment = false; current += ' ' } continue }
@@ -421,28 +481,72 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
           }
           const statements = splitSqlStatements(sqlContent)
           let executed = 0
-          for (let i = 0; i < statements.length; i++) {
+
+          // 优化：批量执行（多条语句拼接后一次查询），大幅减少网络往返
+          const BATCH_SIZE = 50
+          const SKIP_ERRORS = new Set([
+            'Query was empty',
+            'No database selected'
+          ])
+
+          // 关闭 autocommit，使用事务批量提交
+          await conn.query('SET autocommit = 0')
+          let inTransaction = true
+
+          for (let i = 0; i < statements.length; i += BATCH_SIZE) {
             if (cancelFlags.has(operationId)) {
               cancelFlags.delete(operationId)
+              if (inTransaction) await conn.rollback()
               return { success: false, error: '已取消' }
             }
-            const stmt = statements[i]
-            if (stmt.length > 0) {
-              try {
-                await conn.query(stmt)
-              } catch (queryErr: any) {
-                const preview = stmt.length > 200 ? stmt.slice(0, 200) + '...' : stmt
-                const msg = queryErr?.message || String(queryErr)
-                throw new Error(`语句 ${i + 1}/${statements.length} 执行失败:\n${msg}\n\nSQL: ${preview}`)
+
+            const batch = statements.slice(i, i + BATCH_SIZE)
+            const batchSql = batch.join(';\n')
+
+            try {
+              await conn.query(batchSql)
+              executed += batch.length
+            } catch (queryErr: any) {
+              // 批量执行失败，回退到逐条执行以定位问题
+              await conn.rollback()
+              inTransaction = false
+
+              // 重新逐条执行（之前的已回滚，需要重跑）
+              await conn.query('SET autocommit = 0')
+              inTransaction = true
+              let reExecuted = 0
+
+              for (let j = 0; j <= i + batch.length - 1 && j < statements.length; j++) {
+                const stmt = statements[j]
+                if (stmt.length === 0) continue
+                try {
+                  await conn.query(stmt)
+                  reExecuted++
+                } catch (retryErr: any) {
+                  const msg = retryErr?.message || String(retryErr)
+                  // 跳过一些无害的错误
+                  if (SKIP_ERRORS.has(msg)) { continue }
+                  const preview = stmt.length > 200 ? stmt.slice(0, 200) + '...' : stmt
+                  throw new Error(`语句 ${j + 1}/${statements.length} 执行失败:\n${msg}\n\nSQL: ${preview}`)
+                }
               }
-              executed++
+              executed = reExecuted
             }
-            if ((i + 1) % 10 === 0 || i === statements.length - 1) {
-              event.sender.send('db:restoreProgress', { operationId, current: i + 1, total: statements.length })
+
+            if ((i + BATCH_SIZE) % 500 === 0 || i + BATCH_SIZE >= statements.length) {
+              event.sender.send('db:restoreProgress', { operationId, current: Math.min(i + BATCH_SIZE, statements.length), total: statements.length })
             }
           }
+
+          // 提交事务
+          if (inTransaction) {
+            await conn.commit()
+            await conn.query('SET autocommit = 1')
+          }
+
           return { success: true, data: { executed } }
         } finally {
+          try { await conn.query('SET autocommit = 1') } catch {}
           conn.release()
         }
       } catch (err) {
