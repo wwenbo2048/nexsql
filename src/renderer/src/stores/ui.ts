@@ -36,7 +36,7 @@ export const useUiStore = create<UiState>((set) => ({
   contextMenu: null,
 
   setSidebarWidth: (width) => set({ sidebarWidth: Math.max(180, Math.min(500, width)) }),
-  setRightPanelWidth: (width) => set({ rightPanelWidth: Math.max(240, Math.min(600, width)) }),
+  setRightPanelWidth: (width) => set({ rightPanelWidth: Math.max(200, Math.min(window.innerWidth - 400, width)) }),
   setResultPanelHeight: (height) => set({ resultPanelHeight: Math.max(100, Math.min(600, height)) }),
   openConnectionModal: (editingId, presetType) =>
     set({ showConnectionModal: true, editingConnectionId: editingId ?? null, connectionPresetType: presetType ?? null }),

@@ -52,6 +52,8 @@ interface TabState {
   openErDiagram: (connectionId: string, database: string) => void
   openRedisBrowser: (connectionId: string) => void
   openDbSync: (connectionId: string, database: string) => void
+  /** 关闭指定连接的所有 Tab（browser Tab 保留） */
+  closeTabsByConnection: (connectionId: string) => void
   /** 确保浏览器 Tab 存在并激活 */
   ensureBrowserTab: () => void
 }
@@ -218,6 +220,21 @@ export const useTabStore = create<TabState>((set, get) => ({
       title: `同步 ${database}`,
       connectionId,
       database
+    })
+  },
+
+  closeTabsByConnection: (connectionId) => {
+    set((state) => {
+      const kept = state.tabs.filter(
+        (t) => t.type === 'browser' || t.connectionId !== connectionId
+      )
+      let activeTabId = state.activeTabId
+      // 如果当前激活的 Tab 被关闭了，切换回 browser Tab
+      if (!kept.some((t) => t.id === activeTabId)) {
+        activeTabId = BROWSER_TAB_ID
+      }
+      persistTabs(kept)
+      return { tabs: kept, activeTabId }
     })
   },
 

@@ -169,6 +169,127 @@ export async function executeQuery(
   }
 }
 
+// ==================== 批量执行（同一连接，支持会话变量） ====================
+
+export interface BatchStatementResult {
+  sql: string
+  success: boolean
+  affectedRows?: number
+  rowCount?: number
+  insertId?: number
+  changedRows?: number
+  duration?: number
+  error?: string
+  columns?: { name: string; type: string; nullable: boolean }[]
+  rows?: Record<string, unknown>[]
+  warning?: string
+}
+
+/**
+ * 在同一个连接上批量执行多条 SQL，确保会话变量（@var）跨语句共享。
+ * 通过 onProgress 回调实时上报每条语句的执行结果。
+ */
+export async function executeBatch(
+  config: ConnectionConfig,
+  statements: string[],
+  database: string | undefined,
+  onProgress?: (index: number, total: number, result: BatchStatementResult) => void
+): Promise<BatchStatementResult[]> {
+  const pool = await getPool(config)
+  const conn = await pool.getConnection()
+  const results: BatchStatementResult[] = []
+
+  try {
+    if (database) {
+      await conn.changeUser({ database })
+    }
+
+    for (let i = 0; i < statements.length; i++) {
+      const stmt = statements[i]
+      const startTime = performance.now()
+
+      try {
+        const [result, fields] = await conn.query(stmt)
+        const duration = performance.now() - startTime
+
+        if (Array.isArray(result)) {
+          const fieldPackets = fields as (FieldPacket | undefined | null)[]
+          if (!fieldPackets || fieldPackets.some(f => f == null)) {
+            const lastResult = result[result.length - 1] as { affectedRows?: number; insertId?: number; changedRows?: number }
+            const r: BatchStatementResult = {
+              sql: stmt,
+              success: true,
+              affectedRows: lastResult?.affectedRows ?? 0,
+              insertId: lastResult?.insertId,
+              changedRows: lastResult?.changedRows,
+              duration,
+              rowCount: 0
+            }
+            results.push(r)
+            onProgress?.(i, statements.length, r)
+          } else {
+            const rows = result as RowDataPacket[]
+            const selectFields = fields as FieldPacket[]
+            const r: BatchStatementResult = {
+              sql: stmt,
+              success: true,
+              rowCount: rows.length,
+              affectedRows: rows.length,
+              duration,
+              columns: selectFields.map(f => ({
+                name: f.name,
+                type: f.type !== undefined ? String(f.type) : 'unknown',
+                nullable: typeof f.flags === 'number' ? (f.flags & 0x0001) === 0 : true
+              })),
+              rows: rows as Record<string, unknown>[]
+            }
+            results.push(r)
+            onProgress?.(i, statements.length, r)
+          }
+        } else {
+          const r2 = result as { affectedRows: number; insertId?: number; changedRows?: number; warningStatus?: number }
+          let warning: string | undefined
+          if (r2.warningStatus && r2.warningStatus > 0) {
+            try {
+              const [warnings] = await conn.query('SHOW WARNINGS')
+              const w = warnings as RowDataPacket[]
+              if (w.length > 0) {
+                warning = `${w[0].Level}: ${w[0].Message}`
+              }
+            } catch { /* ignore warning errors */ }
+          }
+          const r: BatchStatementResult = {
+            sql: stmt,
+            success: true,
+            affectedRows: r2.affectedRows,
+            insertId: r2.insertId,
+            changedRows: r2.changedRows,
+            duration,
+            warning
+          }
+          results.push(r)
+          onProgress?.(i, statements.length, r)
+        }
+      } catch (err) {
+        const duration = performance.now() - startTime
+        const r: BatchStatementResult = {
+          sql: stmt,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+          duration
+        }
+        results.push(r)
+        onProgress?.(i, statements.length, r)
+        break
+      }
+    }
+
+    return results
+  } finally {
+    conn.release()
+  }
+}
+
 export async function getDatabases(config: ConnectionConfig): Promise<DatabaseInfo[]> {
   const pool = await getPool(config)
   const conn = await pool.getConnection()

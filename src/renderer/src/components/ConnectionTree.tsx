@@ -66,6 +66,7 @@ export default function ConnectionTree() {
   const selectedDatabase = useBrowserStore((s) => s.selectedDatabase)
   const openRedisBrowser = useTabStore((s) => s.openRedisBrowser)
   const openDbSync = useTabStore((s) => s.openDbSync)
+  const closeTabsByConnection = useTabStore((s) => s.closeTabsByConnection)
 
   const handleConnect = useCallback(
     async (config: ConnectionConfig) => {
@@ -107,7 +108,7 @@ export default function ConnectionTree() {
       if (status === 'disconnected' || status === 'error' || status === undefined) {
         await handleConnect(config)
       } else {
-        // 断开
+        // 断开连接
         if (config.type === 'redis') {
           await window.api.redis.disconnect(config.id)
           redisConnected.delete(config.id)
@@ -117,10 +118,16 @@ export default function ConnectionTree() {
         setStatus(config.id, 'disconnected')
         nodeCache.delete(config.id)
         toggleExpand(config.id)
+        // 关闭该连接关联的所有标签页
+        closeTabsByConnection(config.id)
+        // 如果当前选中的数据库属于该连接，清理选中状态
+        if (selectedConnectionId === config.id) {
+          selectDatabase('', '')
+        }
         forceUpdate({})
       }
     },
-    [statuses, handleConnect, setStatus, toggleExpand]
+    [statuses, handleConnect, setStatus, toggleExpand, closeTabsByConnection, selectedConnectionId, selectDatabase]
   )
 
   const handleToggleDatabase = useCallback(

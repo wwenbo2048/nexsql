@@ -48,6 +48,13 @@ const api = {
       ipcRenderer.invoke('db:disconnect', configId),
     query: (config: ConnectionConfig, sql: string, database?: string): Promise<IpcResponse<QueryResult>> =>
       ipcRenderer.invoke('db:query', config, sql, database),
+    executeBatch: (config: ConnectionConfig, statements: string[], database?: string): Promise<IpcResponse> =>
+      ipcRenderer.invoke('db:executeBatch', config, statements, database),
+    onBatchProgress: (callback: (data: { index: number; total: number; result: any }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('db:batchProgress', handler)
+      return () => { ipcRenderer.removeListener('db:batchProgress', handler) }
+    },
     getDatabases: (config: ConnectionConfig): Promise<IpcResponse<DatabaseInfo[]>> =>
       ipcRenderer.invoke('db:getDatabases', config),
     getTables: (config: ConnectionConfig, database: string): Promise<IpcResponse<TableInfo[]>> =>

@@ -250,6 +250,22 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     }
   )
 
+  ipcMain.handle(
+    'db:executeBatch',
+    async (event, config: ConnectionConfig, statements: string[], database?: string): Promise<IpcResponse> => {
+      try {
+        const results = await db.executeBatch(config, statements, database, (index, total, result) => {
+          // 流式上报每条语句的执行进度
+          event.sender.send('db:batchProgress', { index, total, result })
+        })
+        return { success: true, data: results }
+      } catch (err) {
+        logError('db:executeBatch', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
   ipcMain.handle('db:getDatabases', async (_event, config: ConnectionConfig) => {
     try {
       const databases = await db.getDatabases(config)
