@@ -1,6 +1,6 @@
 import mysql, { type Pool, type RowDataPacket, type FieldPacket, type PoolOptions } from 'mysql2/promise'
 import { createWriteStream } from 'fs'
-import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, ViewInfo, RoutineInfo, EventInfo, QueryResult } from '../../shared/types'
+import type { ConnectionConfig, DatabaseInfo, TableInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, TableOptions, TableDetails, ViewInfo, RoutineInfo, EventInfo, QueryResult, ServerStatusData, ServerVariable, ProcessListItem, DatabaseSizeInfo } from '../../shared/types'
 import { createTunnel, closeTunnel, closeAllTunnels, needsTunnel } from './ssh-tunnel'
 
 // 连接池管理
@@ -936,6 +936,103 @@ export async function dumpDatabase(
       return filePath!
     }
     return sql
+  } finally {
+    conn.release()
+  }
+}
+
+// ==================== 性能监控 ====================
+
+export async function getServerStatus(config: ConnectionConfig): Promise<ServerStatusData> {
+  const pool = await getPool(config)
+  const conn = await pool.getConnection()
+  try {
+    // 1. 查询关键服务器变量（使用 performance_schema 兼容性更好）
+    const variableNames = [
+      'version', 'version_comment', 'version_compile_os', 'version_compile_machine',
+      'max_connections', 'max_user_connections', 'innodb_buffer_pool_size',
+      'key_buffer_size', 'table_open_cache', 'thread_cache_size',
+      'wait_timeout', 'interactive_timeout', 'datadir', 'hostname',
+      'port', 'socket', 'character_set_server', 'collation_server',
+      'sql_mode', 'time_zone', 'system_time_zone', 'auto_increment_increment',
+      'lower_case_table_names', 'read_only', 'server_id', 'gtid_mode',
+      'log_bin', 'binlog_format', 'slow_query_log', 'long_query_time',
+      'max_allowed_packet', 'default_storage_engine'
+    ]
+    const varPlaceholders = variableNames.map(() => '?').join(', ')
+    const [varRows] = await conn.query<RowDataPacket[]>(
+      `SELECT VARIABLE_NAME, VARIABLE_VALUE
+       FROM performance_schema.global_variables
+       WHERE VARIABLE_NAME IN (${varPlaceholders})`,
+      variableNames
+    )
+    const variables: ServerVariable[] = varRows.map((r: any) => ({
+      name: String(r.VARIABLE_NAME ?? ''),
+      value: String(r.VARIABLE_VALUE ?? '')
+    }))
+
+    // 2. 查询关键状态指标
+    const statusNames = [
+      'Uptime', 'Threads_connected', 'Threads_running', 'Threads_cached',
+      'Threads_created', 'Connections', 'Max_used_connections',
+      'Aborted_clients', 'Aborted_connects', 'Connection_errors_max_connections',
+      'Slow_queries', 'Questions', 'Com_select', 'Com_insert', 'Com_update',
+      'Com_delete', 'Com_commit', 'Com_rollback',
+      'Bytes_received', 'Bytes_sent',
+      'Innodb_buffer_pool_pages_total', 'Innodb_buffer_pool_pages_free',
+      'Innodb_buffer_pool_pages_dirty', 'Innodb_buffer_pool_read_requests',
+      'Innodb_buffer_pool_reads', 'Innodb_buffer_pool_write_requests',
+      'Innodb_buffer_pool_pages_flushed', 'Innodb_log_writes', 'Innodb_os_log_fsyncs',
+      'Innodb_row_lock_time_avg', 'Innodb_row_lock_waits', 'Innodb_rows_inserted',
+      'Innodb_rows_updated', 'Innodb_rows_deleted', 'Innodb_rows_read',
+      'Key_read_requests', 'Key_reads', 'Key_write_requests', 'Key_writes',
+      'Created_tmp_disk_tables', 'Created_tmp_tables',
+      'Opened_tables', 'Opened_files', 'Select_full_join', 'Select_scan',
+      'Sort_merge_passes', 'Sort_scan', 'Table_locks_immediate', 'Table_locks_waited',
+      'Binlog_cache_disk_use', 'Binlog_cache_use'
+    ]
+    const statusPlaceholders = statusNames.map(() => '?').join(', ')
+    const [statusRows] = await conn.query<RowDataPacket[]>(
+      `SELECT VARIABLE_NAME, VARIABLE_VALUE
+       FROM performance_schema.global_status
+       WHERE VARIABLE_NAME IN (${statusPlaceholders})`,
+      statusNames
+    )
+    const status: ServerVariable[] = statusRows.map((r: any) => ({
+      name: String(r.VARIABLE_NAME ?? ''),
+      value: String(r.VARIABLE_VALUE ?? '')
+    }))
+
+    // 3. 查询进程列表
+    const [procRows] = await conn.query<RowDataPacket[]>('SHOW FULL PROCESSLIST')
+    const processList: ProcessListItem[] = procRows.map((r: any) => ({
+      id: Number(r.Id) || 0,
+      user: String(r.User ?? ''),
+      host: String(r.Host ?? ''),
+      db: r.db ?? null,
+      command: String(r.Command ?? ''),
+      time: Number(r.Time) || 0,
+      state: r.State ?? null,
+      info: r.Info ? String(r.Info).slice(0, 500) : null
+    }))
+
+    // 4. 查询各数据库大小
+    const [dbSizeRows] = await conn.query<RowDataPacket[]>(
+      `SELECT table_schema AS \`database\`,
+              SUM(data_length + index_length) AS size,
+              COUNT(*) AS tables
+       FROM information_schema.TABLES
+       WHERE table_schema NOT IN ('mysql', 'performance_schema', 'information_schema', 'sys')
+       GROUP BY table_schema
+       ORDER BY size DESC`
+    )
+    const databaseSizes: DatabaseSizeInfo[] = dbSizeRows.map((r: any) => ({
+      database: String(r.database ?? ''),
+      size: Number(r.size) || 0,
+      tables: Number(r.tables) || 0
+    }))
+
+    return { variables, status, processList, databaseSizes }
   } finally {
     conn.release()
   }

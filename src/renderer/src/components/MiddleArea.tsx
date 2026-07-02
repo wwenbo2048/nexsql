@@ -8,6 +8,7 @@ import StructureEditor from './StructureEditor'
 import ERDiagramView from './ERDiagramView'
 import RedisBrowser from './RedisBrowser'
 import DatabaseSyncView from './DatabaseSyncView'
+import PerformanceMonitor from './PerformanceMonitor'
 import { Database, Terminal } from 'lucide-react'
 import type { Tab } from '@shared/types'
 
@@ -65,6 +66,9 @@ export default function MiddleArea() {
           />
         )
       }
+
+      case 'performance':
+        return <PerformanceMonitor tab={tab} />
 
       default:
         return (

@@ -4,6 +4,7 @@ import QueryEditor from './QueryEditor'
 import DataTable from './DataTable'
 import TableDesign from './TableDesign'
 import RedisBrowser from './RedisBrowser'
+import PerformanceMonitor from './PerformanceMonitor'
 import { Terminal, Database } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 
@@ -34,6 +35,7 @@ export default function MainContent() {
           const conn = connections.find((c) => c.id === activeTab.connectionId)
           return conn ? <RedisBrowser config={conn} onClose={() => useTabStore.getState().closeTab(activeTab.id)} /> : null
         })()}
+        {activeTab.type === 'performance' && <PerformanceMonitor tab={activeTab} />}
       </div>
     </div>
   )

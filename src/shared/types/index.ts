@@ -191,7 +191,7 @@ export interface IpcResponse<T = unknown> {
 
 // ==================== Tab 类型 ====================
 
-export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet' | 'redis-browser' | 'db-sync'
+export type TabType = 'browser' | 'query' | 'table-data' | 'table-design' | 'er' | 'view' | 'routine' | 'event' | 'snippet' | 'redis-browser' | 'db-sync' | 'performance'
 
 export interface Tab {
   id: string
@@ -204,6 +204,37 @@ export interface Tab {
   dirty?: boolean
   sql?: string
   savedQueryId?: string
+}
+
+// ==================== 性能监控类型 ====================
+
+export interface ServerVariable {
+  name: string
+  value: string
+}
+
+export interface ProcessListItem {
+  id: number
+  user: string
+  host: string
+  db: string | null
+  command: string
+  time: number
+  state: string | null
+  info: string | null
+}
+
+export interface DatabaseSizeInfo {
+  database: string
+  size: number
+  tables: number
+}
+
+export interface ServerStatusData {
+  variables: ServerVariable[]
+  status: ServerVariable[]
+  processList: ProcessListItem[]
+  databaseSizes: DatabaseSizeInfo[]
 }
 
 // ==================== Redis 类型 ====================

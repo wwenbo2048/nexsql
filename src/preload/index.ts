@@ -15,7 +15,8 @@ import type {
   QueryResult,
   IpcResponse,
   RedisKeyInfo,
-  RedisKeyValue
+  RedisKeyValue,
+  ServerStatusData
 } from '../shared/types'
 
 // ==================== API 接口定义 ====================
@@ -85,6 +86,8 @@ const api = {
       ipcRenderer.invoke('db:getERRelations', config, database),
     getERTableColumns: (config: ConnectionConfig, database: string): Promise<IpcResponse> =>
       ipcRenderer.invoke('db:getERTableColumns', config, database),
+    getServerStatus: (config: ConnectionConfig): Promise<IpcResponse<ServerStatusData>> =>
+      ipcRenderer.invoke('db:getServerStatus', config),
     dumpDatabase: (config: ConnectionConfig, database: string, options: { tables: string[]; includeData: boolean; includeStructure: boolean }, operationId: string, filePath?: string): Promise<IpcResponse<string>> =>
       ipcRenderer.invoke('db:dumpDatabase', config, database, options, operationId, filePath),
     restoreDatabase: (config: ConnectionConfig, database: string, sqlOrPath: string, operationId: string): Promise<IpcResponse<{ executed: number }>> =>

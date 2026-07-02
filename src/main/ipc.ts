@@ -457,6 +457,21 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     }
   )
 
+  // ==================== 性能监控 ====================
+
+  ipcMain.handle(
+    'db:getServerStatus',
+    async (_event, config: ConnectionConfig) => {
+      try {
+        const data = await db.getServerStatus(config)
+        return { success: true, data }
+      } catch (err) {
+        logError('db:getServerStatus', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
   // ==================== 数据库备份/恢复 ====================
 
   // 取消标记

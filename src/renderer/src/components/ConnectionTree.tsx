@@ -20,7 +20,8 @@ import {
   HardDriveUpload,
   Tag,
   FolderOpen,
-  KeyRound
+  KeyRound,
+  Activity
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useBrowserStore, type DbCategory } from '@stores/browser'
@@ -66,6 +67,7 @@ export default function ConnectionTree() {
   const selectedDatabase = useBrowserStore((s) => s.selectedDatabase)
   const openRedisBrowser = useTabStore((s) => s.openRedisBrowser)
   const openDbSync = useTabStore((s) => s.openDbSync)
+  const openPerformance = useTabStore((s) => s.openPerformance)
   const closeTabsByConnection = useTabStore((s) => s.closeTabsByConnection)
 
   const handleConnect = useCallback(
@@ -348,6 +350,7 @@ export default function ConnectionTree() {
           onClick: () => openRedisBrowser(config.id)
         }] : []),
         ...(config.type !== 'redis' ? [{ label: '新建查询', onClick: () => handleNewQuery(config) }] : []),
+        ...(isConnected && config.type !== 'redis' ? [{ label: '性能监控', onClick: () => openPerformance(config.id) }] : []),
         {
           label: '编辑连接',
           onClick: () => openConnectionModal(config.id)
@@ -366,7 +369,7 @@ export default function ConnectionTree() {
       ]
       setContextMenu({ x: e.clientX, y: e.clientY, items })
     },
-    [statuses, handleToggleConnection, handleCreateDatabase, handleNewQuery, openConnectionModal, deleteConnection, setContextMenu]
+    [statuses, handleToggleConnection, handleCreateDatabase, handleNewQuery, openConnectionModal, deleteConnection, setContextMenu, openRedisBrowser, openPerformance]
   )
 
   const handleTableContextMenu = useCallback(

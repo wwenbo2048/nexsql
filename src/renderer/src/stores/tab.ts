@@ -52,6 +52,7 @@ interface TabState {
   openErDiagram: (connectionId: string, database: string) => void
   openRedisBrowser: (connectionId: string) => void
   openDbSync: (connectionId: string, database: string) => void
+  openPerformance: (connectionId: string) => void
   /** 关闭指定连接的所有 Tab（browser Tab 保留） */
   closeTabsByConnection: (connectionId: string) => void
   /** 确保浏览器 Tab 存在并激活 */
@@ -220,6 +221,15 @@ export const useTabStore = create<TabState>((set, get) => ({
       title: `同步 ${database}`,
       connectionId,
       database
+    })
+  },
+
+  openPerformance: (connectionId) => {
+    get().openTab({
+      id: `performance-${connectionId}`,
+      type: 'performance',
+      title: '性能监控',
+      connectionId
     })
   },
 
