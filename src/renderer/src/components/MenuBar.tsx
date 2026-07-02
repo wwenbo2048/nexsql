@@ -19,7 +19,8 @@ import {
   Database as DbIcon,
   Wrench,
   Github,
-  Info
+  Info,
+  Settings
 } from 'lucide-react'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
@@ -49,6 +50,8 @@ export default function MenuBar() {
 
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
+  const defaultPageSize = useUiStore((s) => s.defaultPageSize)
+  const setDefaultPageSize = useUiStore((s) => s.setDefaultPageSize)
   const { selectedConnectionId, selectedDatabase, selectedTable, selectedCategory, refreshList, startCreating, selectCategory } = useBrowserStore()
   const { connections, statuses } = useConnectionStore()
   const activeTab = useTabStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
@@ -238,6 +241,24 @@ export default function MenuBar() {
       label: '美化 SQL（关键字大写）',
       icon: <Sparkles size={13} />,
       onClick: () => { window.dispatchEvent(new CustomEvent('nexsql-format-sql')); setOpenMenu(null) }
+    },
+    { label: '', separator: true },
+    {
+      label: '设置默认每页数量',
+      icon: <Settings size={13} />,
+      onClick: () => {
+        const opts = [50, 100, 200, 500, 1000, 2000, 5000]
+        const current = defaultPageSize
+        setContextMenu({
+          x: 200,
+          y: 200,
+          items: opts.map(opt => ({
+            label: `${opt} 条/页${opt === current ? '  ✓' : ''}`,
+            onClick: () => setDefaultPageSize(opt)
+          }))
+        })
+        setOpenMenu(null)
+      }
     },
     { label: '', separator: true },
     {

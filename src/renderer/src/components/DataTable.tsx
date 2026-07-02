@@ -19,10 +19,11 @@ import {
   Copy, ClipboardPaste, Search
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
+import { useUiStore } from '@stores/ui'
 import type { Tab, ColumnInfo, QueryResult } from '@shared/types'
 
 interface Props { tab: Tab }
-const PAGE_SIZE = 100
+const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000, 2000, 5000]
 type SortDir = 'ASC' | 'DESC' | null
 type FilterOp = '=' | '!=' | '>' | '>=' | '<' | '<=' | 'LIKE' | 'NOT LIKE' | 'IS NULL' | 'IS NOT NULL'
 type FilterLogic = 'AND' | 'OR'
@@ -172,6 +173,8 @@ const GDG_THEME: Partial<Theme> = {
 export default function DataTable({ tab }: Props) {
   const connections = useConnectionStore((s) => s.connections)
   const config = connections.find((c) => c.id === tab.connectionId)
+  const defaultPageSize = useUiStore((s) => s.defaultPageSize)
+  const [pageSize, setPageSize] = useState(defaultPageSize)
   const [columns, setColumns] = useState<ColumnInfo[]>([])
   const [result, setResult] = useState<QueryResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -253,20 +256,20 @@ export default function DataTable({ tab }: Props) {
         sql += ` WHERE ${whereParts.join(' ')}`
       }
       if (sortCol && sortDir) sql += ` ORDER BY \`${sortCol}\` ${sortDir}`
-      sql += ` LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`
+      sql += ` LIMIT ${pageSize} OFFSET ${page * pageSize}`
       const res = await window.api.db.query(config, sql, tab.database)
       if (abortRef.current) return
       if (!res.success) throw new Error(res.error)
       setResult(res.data ?? null)
     } catch (err) { if (!abortRef.current) setError((err as Error).message) }
     finally { if (!abortRef.current) setLoading(false) }
-  }, [config, tab.database, tab.table, page, appliedConditions, sortCol, sortDir])
+  }, [config, tab.database, tab.table, page, pageSize, appliedConditions, sortCol, sortDir])
 
   useEffect(() => { loadData() }, [loadData])
 
   useEffect(() => {
     if (!result?.rows) { setRows([]); setSnapshot([]); setSnapshotMap(new Map()); return }
-    const newRows: RowData[] = result.rows.map((row, idx) => ({ _row_key: genRowKey(), _row_num: page * PAGE_SIZE + idx + 1, ...row }))
+    const newRows: RowData[] = result.rows.map((row, idx) => ({ _row_key: genRowKey(), _row_num: page * pageSize + idx + 1, ...row }))
     setRows(newRows); setSnapshot(newRows)
     const smap = new Map<string, RowData>(); newRows.forEach((r) => smap.set(r._row_key, { ...r })); setSnapshotMap(smap)
   }, [result, page])
@@ -753,9 +756,9 @@ export default function DataTable({ tab }: Props) {
     setAppliedConditions(valid); setPage(0)
   }, [conditions])
   const clearFilter = useCallback(() => { setConditions([]); setAppliedConditions([]); setPage(0) }, [])
-  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE))
-  const startRow = totalRows === 0 ? 0 : page * PAGE_SIZE + 1
-  const endRow = Math.min((page + 1) * PAGE_SIZE, totalRows)
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize))
+  const startRow = totalRows === 0 ? 0 : page * pageSize + 1
+  const endRow = Math.min((page + 1) * pageSize, totalRows)
 
   // 当前选中单元格（用于底部编辑器）
   const editorRowKey = useMemo(() => {
@@ -900,6 +903,20 @@ export default function DataTable({ tab }: Props) {
         <div className="ml-auto flex items-center gap-2 text-xs text-text-secondary">
           {loading ? <Loader2 size={12} className="animate-spin" /> : (<>
             <span>{startRow}-{endRow} / {totalRows}</span>
+            {/* 每页数量选择 */}
+            <div className="relative flex items-center">
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0) }}
+                className="appearance-none bg-bg-primary border border-border-light rounded text-[11px] pl-2 pr-5 py-0.5 text-text-primary hover:border-accent focus:outline-none focus:border-accent transition-colors cursor-pointer"
+                title="每页显示数量"
+              >
+                {PAGE_SIZE_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>{opt} 条/页</option>
+                ))}
+              </select>
+              <ChevronDown size={10} className="absolute right-1 text-text-muted pointer-events-none" />
+            </div>
             <div className="flex items-center gap-0.5">
               <button onClick={() => setPage(0)} disabled={page === 0} className="p-1 hover:bg-bg-hover rounded transition-colors disabled:opacity-30"><ChevronsLeft size={14} /></button>
               <button onClick={() => setPage(page - 1)} disabled={page === 0} className="p-1 hover:bg-bg-hover rounded transition-colors disabled:opacity-30"><ChevronLeft size={14} /></button>
