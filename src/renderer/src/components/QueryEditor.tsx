@@ -15,15 +15,18 @@ import {
   CheckCircle2,
   Terminal,
   Server,
-  Database as DatabaseIcon
+  Database as DatabaseIcon,
+  BookmarkPlus,
+  X,
+  Sparkles
 } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
 import { useHistoryStore } from '@stores/history'
 import { useBrowserStore } from '@stores/browser'
 import type { Tab, QueryResult, DatabaseInfo } from '@shared/types'
-import QueryHistoryPanel from './QueryHistoryPanel'
 import ExplainPlanView from './ExplainPlanView'
+import AiSqlPanel from './AiSqlPanel'
 
 /**
  * 智能 SQL 语句分割：
@@ -136,7 +139,6 @@ export default function QueryEditor({ tab }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [selectedSql, setSelectedSql] = useState<string | null>(null)
   const [showResult, setShowResult] = useState(true)
-  const [showHistory, setShowHistory] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
   const [explainData, setExplainData] = useState<{ rows: Record<string, unknown>[]; columns: { name: string; type: string; nullable: boolean }[]; treeText?: string } | null>(null)
   const [explainLoading, setExplainLoading] = useState(false)
@@ -151,10 +153,17 @@ export default function QueryEditor({ tab }: Props) {
   const [dbListLoading, setDbListLoading] = useState(false)
   const editorRef = useRef<any>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  const historyDropdownRef = useRef<HTMLDivElement>(null)
   const connections = useConnectionStore((s) => s.connections)
   const resultPanelHeight = useUiStore((s) => s.resultPanelHeight)
   const setResultPanelHeight = useUiStore((s) => s.setResultPanelHeight)
   const addHistoryEntry = useHistoryStore((s) => s.addEntry)
+  const saveSqlToHistory = useHistoryStore((s) => s.saveSql)
+  const historyList = useHistoryStore((s) => s.history)
+  const removeHistoryEntry = useHistoryStore((s) => s.removeEntry)
+  const clearHistory = useHistoryStore((s) => s.clearHistory)
+  const [showHistoryDropdown, setShowHistoryDropdown] = useState(false)
+  const [showAiPanel, setShowAiPanel] = useState(false)
   const { saveQuery, updateQuery } = useBrowserStore()
 
   const isSavedQuery = !!tab.savedQueryId
@@ -301,6 +310,7 @@ export default function QueryEditor({ tab }: Props) {
         setError(res.error ?? '执行失败')
       }
 
+      // 自动记录执行历史
       addHistoryEntry({
         sql: rawSql,
         connectionId: config.id,
@@ -310,6 +320,7 @@ export default function QueryEditor({ tab }: Props) {
         hasError,
         error: batchResults.find(r => r.error)?.error
       })
+
     } catch (err) {
       removeListener()
       setLoading(false)
@@ -317,6 +328,14 @@ export default function QueryEditor({ tab }: Props) {
       setError((err as Error).message)
     }
   }, [config, sql, selectedDb, addHistoryEntry])
+
+  // 手动保存到历史记录（不执行）
+  const handleSaveToHistory = useCallback(() => {
+    if (!sql.trim() || !config) return
+    saveSqlToHistory(sql, config.id, selectedDb || undefined)
+    setSaveFlash(true)
+    setTimeout(() => setSaveFlash(false), 1000)
+  }, [sql, selectedDb, config, saveSqlToHistory])
 
   const handleExplain = useCallback(async () => {
     if (!config) return
@@ -391,6 +410,18 @@ export default function QueryEditor({ tab }: Props) {
     }
   }, [executionLogs])
 
+  // 历史下拉点击外部关闭
+  useEffect(() => {
+    if (!showHistoryDropdown) return
+    const handler = (e: MouseEvent) => {
+      if (historyDropdownRef.current && !historyDropdownRef.current.contains(e.target as Node)) {
+        setShowHistoryDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showHistoryDropdown])
+
   // Monaco 编辑器内也拦截快捷键
   const handleEditorMount = useCallback((editor: any) => {
     editorRef.current = editor
@@ -455,6 +486,25 @@ export default function QueryEditor({ tab }: Props) {
     a.click()
     URL.revokeObjectURL(url)
   }, [result])
+
+  // AI 生成的 SQL 插入编辑器
+  const handleInsertSql = useCallback((newSql: string, mode: 'replace' | 'append') => {
+    if (mode === 'replace') {
+      setSql(newSql)
+    } else {
+      setSql((prev) => prev.trimEnd() + '\n\n' + newSql)
+    }
+    // 如果编辑器实例存在，也更新选区位置
+    if (editorRef.current) {
+      editorRef.current.focus()
+    }
+  }, [])
+
+  const formatTime = (ts: number): string => {
+    const d = new Date(ts)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
 
   const formatDuration = (ms: number): string => {
     if (ms < 1000) return `${Math.round(ms)}ms`
@@ -536,12 +586,15 @@ export default function QueryEditor({ tab }: Props) {
           </button>
         )}
         <button
-          onClick={() => setShowHistory((v) => !v)}
-          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${showHistory ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:text-text-primary'}`}
-          title="查询历史"
+          onClick={handleSaveToHistory}
+          disabled={!sql.trim()}
+          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+            saveFlash ? 'text-green-400' : 'text-text-secondary hover:text-text-primary'
+          }`}
+          title="保存当前 SQL 到历史记录"
         >
-          <History size={14} />
-          历史
+          <BookmarkPlus size={14} />
+          {saveFlash ? '已保存' : '保存记录'}
         </button>
         <button
           onClick={handleSave}
@@ -562,6 +615,15 @@ export default function QueryEditor({ tab }: Props) {
         >
           {explainLoading ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
           计划
+        </button>
+        {/* AI 自然语言转 SQL */}
+        <button
+          onClick={() => setShowAiPanel(!showAiPanel)}
+          className={`flex items-center gap-1 px-2 py-1 text-xs transition-colors ${showAiPanel ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:text-text-primary'}`}
+          title="AI 自然语言生成 SQL"
+        >
+          <Sparkles size={14} />
+          AI
         </button>
         {/* 服务器 + 数据库 联动选择 */}
         <div className="ml-auto flex items-center gap-1.5">
@@ -618,6 +680,113 @@ export default function QueryEditor({ tab }: Props) {
               </select>
             )}
           </div>
+
+          {/* 历史记录下拉 */}
+          <div className="relative">
+            <button
+              onClick={() => setShowHistoryDropdown((v) => !v)}
+              className={`flex items-center gap-1 px-2 py-1 border border-border-light rounded text-xs transition-colors ${
+                showHistoryDropdown ? 'bg-accent/20 text-accent border-accent' : 'text-text-secondary hover:text-text-primary hover:border-accent'
+              }`}
+              title="查询历史"
+            >
+              <History size={12} />
+              历史
+              <ChevronDown size={10} />
+            </button>
+            {showHistoryDropdown && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowHistoryDropdown(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 w-[420px] max-h-[360px] bg-bg-secondary border border-border-light rounded shadow-xl flex flex-col overflow-hidden">
+                  {/* 头部 */}
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-border-light flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      <History size={13} className="text-text-secondary" />
+                      <span className="text-xs font-medium text-text-primary">历史记录</span>
+                      <span className="text-[10px] text-text-muted">({historyList.length}/20)</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {historyList.length > 0 && (
+                        <button
+                          onClick={() => clearHistory()}
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded hover:bg-bg-hover text-text-muted hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={10} />
+                          清空
+                        </button>
+                      )}
+                      <button onClick={() => setShowHistoryDropdown(false)} className="p-0.5 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary">
+                        <X size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  {/* 列表 */}
+                  <div className="flex-1 overflow-y-auto">
+                    {historyList.length === 0 ? (
+                      <div className="flex items-center justify-center py-8 text-text-muted text-xs">
+                        暂无历史记录，执行 SQL 后自动记录
+                      </div>
+                    ) : (
+                      historyList.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-start gap-2 px-3 py-2 border-b border-border-light/50 hover:bg-bg-hover group cursor-pointer"
+                          onClick={() => {
+                            setSql(entry.sql)
+                            setShowHistoryDropdown(false)
+                          }}
+                          title="点击填入编辑器"
+                        >
+                          <div className="flex-shrink-0 mt-0.5">
+                            {entry.hasError ? (
+                              <AlertCircle size={11} className="text-red-400" />
+                            ) : (
+                              <CheckCircle2 size={11} className="text-green-400" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <pre className="text-[11px] font-mono text-text-primary truncate leading-relaxed">
+                              {entry.sql.replace(/\n/g, ' ').slice(0, 100)}
+                            </pre>
+                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-text-muted">
+                              <span>{new Date(entry.executedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                              {entry.database && (
+                                <span className="flex items-center gap-0.5">
+                                  <DatabaseIcon size={9} />
+                                  {entry.database}
+                                </span>
+                              )}
+                              {entry.duration > 0 && (
+                                <span>{formatDuration(entry.duration)}</span>
+                              )}
+                              {entry.rowCount !== undefined && entry.rowCount > 0 && (
+                                <span>{entry.rowCount} 行</span>
+                              )}
+                              {entry.hasError && entry.error && (
+                                <span className="text-red-400 truncate max-w-[120px]" title={entry.error}>
+                                  {entry.error}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              removeHistoryEntry(entry.id)
+                            }}
+                            className="flex-shrink-0 p-1 rounded hover:bg-bg-hover text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                            title="删除"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -659,6 +828,10 @@ export default function QueryEditor({ tab }: Props) {
         </div>
       )}
 
+      {/* 主内容区：编辑器+结果 | AI 面板 */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* 编辑器+结果列 */}
+        <div className="flex-1 flex flex-col overflow-hidden">
       {/* 编辑器 */}
       <div className="flex-1 overflow-hidden" style={{ minHeight: 100 }}>
         <Editor
@@ -895,16 +1068,22 @@ export default function QueryEditor({ tab }: Props) {
         </div>
       )}
 
-      {/* 查询历史面板 */}
-      {showHistory && (
-        <QueryHistoryPanel
-          onSelectSql={(historySql: string) => {
-            setSql(historySql)
-            setShowHistory(false)
-          }}
-          onClose={() => setShowHistory(false)}
-        />
-      )}
+        </div>{/* /编辑器+结果列 */}
+
+        {/* AI 面板 */}
+        {showAiPanel && (
+          <div className="w-[360px] flex-shrink-0 border-l border-border-light">
+            <AiSqlPanel
+              config={config}
+              database={selectedDb || undefined}
+              existingSql={sql}
+              onInsertSql={handleInsertSql}
+              onClose={() => setShowAiPanel(false)}
+            />
+          </div>
+        )}
+      </div>{/* /主内容区 */}
+
     </div>
   )
 }

@@ -172,13 +172,8 @@ export interface QueryResult {
 export interface QueryHistory {
   id: string
   sql: string
-  connectionId: string
   database?: string
-  executedAt: number
-  duration: number
-  rowCount?: number
-  hasError: boolean
-  error?: string
+  savedAt: number
 }
 
 // ==================== IPC 通信类型 ====================

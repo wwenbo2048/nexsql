@@ -203,6 +203,7 @@ export default function DataTable({ tab }: Props) {
   const [showImportMenu, setShowImportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const importMenuRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // Glide Data Grid 选择状态
   const [gridSelection, setGridSelection] = useState<GridSelection>({ columns: CompactSelection.empty(), rows: CompactSelection.empty() })
@@ -793,6 +794,8 @@ export default function DataTable({ tab }: Props) {
   // 全局键盘事件 (Ctrl+C/V + 范围选区输入填充)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 仅当此组件实例可见时才响应（隐藏的 Tab 不应处理键盘事件）
+      if (containerRef.current && containerRef.current.offsetParent === null) return
       const active = document.activeElement as HTMLElement
       const tag = active?.tagName
       const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || active?.isContentEditable
@@ -835,7 +838,7 @@ export default function DataTable({ tab }: Props) {
 
 
   return (
-    <div className="flex flex-col h-full">
+    <div ref={containerRef} className="flex flex-col h-full">
       {/* 工具栏 */}
       <div className="flex items-center gap-1 px-2 py-1 border-b border-border-light bg-bg-secondary flex-shrink-0">
         {loading ? (

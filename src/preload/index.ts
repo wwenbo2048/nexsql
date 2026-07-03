@@ -118,6 +118,27 @@ const api = {
       ipcRenderer.invoke('file:openDialog', filterExt)
   },
 
+  // AI 自然语言生成 SQL
+  ai: {
+    getSettings: (): Promise<{ apiKey: string; model: string }> =>
+      ipcRenderer.invoke('ai:getSettings'),
+    setSettings: (settings: { apiKey: string; model: string }): Promise<boolean> =>
+      ipcRenderer.invoke('ai:setSettings', settings),
+    validateApiKey: (apiKey: string, model?: string): Promise<{ success: boolean; data?: boolean; error?: string }> =>
+      ipcRenderer.invoke('ai:validateApiKey', apiKey, model),
+    generateSql: (
+      params: { requestId: string; prompt: string; config?: any; database?: string; existingSql?: string }
+    ): Promise<{ success: boolean; data?: string; error?: string }> =>
+      ipcRenderer.invoke('ai:generateSql', params),
+    cancelGenerate: (requestId: string): Promise<void> =>
+      ipcRenderer.invoke('ai:cancelGenerate', requestId),
+    onStreamChunk: (callback: (data: { requestId: string; chunk: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('ai:streamChunk', handler)
+      return () => { ipcRenderer.removeListener('ai:streamChunk', handler) }
+    }
+  },
+
   // Redis 操作
   redis: {
     testConnection: (config: ConnectionConfig): Promise<IpcResponse> =>

@@ -28,14 +28,14 @@ export default function MainContent() {
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
       <TabBar />
       <div className="flex-1 overflow-hidden">
-        {activeTab.type === 'query' && <QueryEditor tab={activeTab} />}
-        {activeTab.type === 'table-data' && <DataTable tab={activeTab} />}
-        {activeTab.type === 'table-design' && <TableDesign tab={activeTab} />}
+        {activeTab.type === 'query' && <QueryEditor key={activeTab.id} tab={activeTab} />}
+        {activeTab.type === 'table-data' && <DataTable key={activeTab.id} tab={activeTab} />}
+        {activeTab.type === 'table-design' && <TableDesign key={activeTab.id} tab={activeTab} />}
         {activeTab.type === 'redis-browser' && (() => {
           const conn = connections.find((c) => c.id === activeTab.connectionId)
-          return conn ? <RedisBrowser config={conn} onClose={() => useTabStore.getState().closeTab(activeTab.id)} /> : null
+          return conn ? <RedisBrowser key={activeTab.id} config={conn} onClose={() => useTabStore.getState().closeTab(activeTab.id)} /> : null
         })()}
-        {activeTab.type === 'performance' && <PerformanceMonitor tab={activeTab} />}
+        {activeTab.type === 'performance' && <PerformanceMonitor key={activeTab.id} tab={activeTab} />}
       </div>
     </div>
   )

@@ -8,13 +8,21 @@ import { encryptPassword, decryptPassword } from './crypto'
 import type { ConnectionConfig, IpcResponse } from '../shared/types'
 import * as db from './services/db'
 import * as redis from './services/redis'
+import { generateSqlStream, validateApiKey } from './services/ai'
+
+interface AISettings {
+  apiKey: string
+  model: string
+}
 
 const store = new Store<{
   connections: ConnectionConfig[]
+  aiSettings: AISettings
 }>({
   name: 'nexsql-config',
   defaults: {
-    connections: []
+    connections: [],
+    aiSettings: { apiKey: '', model: 'deepseek-chat' }
   }
 })
 
@@ -867,6 +875,107 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
         return { success: true, data: result }
       } catch (err) {
         logError('redis:command', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  // ==================== AI 自然语言生成 SQL ====================
+
+  // 获取 AI 设置
+  ipcMain.handle('ai:getSettings', () => {
+    const settings = store.get('aiSettings', { apiKey: '', model: 'deepseek-chat' })
+    return { apiKey: settings.apiKey, model: settings.model }
+  })
+
+  // 保存 AI 设置
+  ipcMain.handle('ai:setSettings', (_event, settings: { apiKey: string; model: string }) => {
+    store.set('aiSettings', settings)
+    return true
+  })
+
+  // 验证 API Key
+  ipcMain.handle('ai:validateApiKey', async (_event, apiKey: string, model?: string) => {
+    try {
+      const valid = await validateApiKey(apiKey, model || 'deepseek-chat')
+      return { success: true, data: valid }
+    } catch (err) {
+      logError('ai:validateApiKey', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  // 流式生成 SQL
+  // 取消标记
+  const aiCancelFlags = new Set<string>()
+
+  ipcMain.handle('ai:cancelGenerate', (_event, requestId: string) => {
+    aiCancelFlags.add(requestId)
+  })
+
+  ipcMain.handle(
+    'ai:generateSql',
+    async (
+      event,
+      params: {
+        requestId: string
+        prompt: string
+        config?: ConnectionConfig
+        database?: string
+        existingSql?: string
+      }
+    ) => {
+      const { requestId, prompt, config, database, existingSql } = params
+      const aiSettings = store.get('aiSettings', { apiKey: '', model: 'deepseek-chat' })
+
+      if (!aiSettings.apiKey) {
+        return { success: false, error: '请先配置 DeepSeek API Key' }
+      }
+
+      // 获取数据库 schema 作为上下文
+      let schema: { table: string; columns: { name: string; type: string; isPK: boolean }[] }[] | undefined
+      if (config && database) {
+        try {
+          schema = await db.getAllTableColumns(config, database)
+        } catch {
+          // schema 获取失败不影响生成，让 AI 在无表结构上下文下工作
+        }
+      }
+
+      try {
+        const fullSql = await generateSqlStream(
+          {
+            prompt,
+            apiKey: aiSettings.apiKey,
+            model: aiSettings.model,
+            database,
+            schema,
+            existingSql,
+          },
+          {
+            onChunk: (chunk: string) => {
+              if (aiCancelFlags.has(requestId)) return
+              event.sender.send('ai:streamChunk', { requestId, chunk })
+            },
+            signal: {
+              get cancelled() {
+                return aiCancelFlags.has(requestId)
+              },
+            },
+          }
+        )
+
+        const wasCancelled = aiCancelFlags.has(requestId)
+        aiCancelFlags.delete(requestId)
+
+        if (wasCancelled) {
+          return { success: false, error: '已取消' }
+        }
+
+        return { success: true, data: fullSql }
+      } catch (err) {
+        aiCancelFlags.delete(requestId)
+        logError('ai:generateSql', err)
         return { success: false, error: getFullErrorMessage(err) }
       }
     }
