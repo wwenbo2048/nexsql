@@ -24,7 +24,8 @@ const SQL_KEYWORDS = [
   'WITH', 'RECURSIVE', 'OVER', 'PARTITION', 'ROW_NUMBER', 'RANK', 'DENSE_RANK',
   'FETCH', 'NEXT', 'ROWS', 'ONLY', 'FOR', 'EACH', 'ROW', 'BEFORE', 'AFTER',
   'REPLACE', 'IGNORE', 'DUPLICATE', 'OPTIMIZE', 'ANALYZE', 'REPAIR',
-  'START', 'SAVEPOINT', 'RELEASE', 'LOCK', 'UNLOCK', 'TABLES', 'READ', 'WRITE'
+  'START', 'SAVEPOINT', 'RELEASE', 'LOCK', 'UNLOCK', 'TABLES', 'READ', 'WRITE',
+  'DELIMITER'
 ]
 
 const SQL_SNIPPETS = [
@@ -88,6 +89,34 @@ const SQL_SNIPPETS = [
     insertText: 'EXPLAIN SELECT * FROM ${1:table_name} WHERE ${2:condition};',
     detail: '执行计划分析',
     documentation: 'EXPLAIN SELECT ...'
+  },
+  {
+    label: 'DELIMITER TRIGGER',
+    insertText: [
+      'DELIMITER $$',
+      'CREATE TRIGGER ${1:trigger_name}',
+      '${2:AFTER} ${3:INSERT} ON ${4:table_name}',
+      'FOR EACH ROW',
+      'BEGIN',
+      '  ${5:-- 触发器逻辑}',
+      'END$$',
+      'DELIMITER ;'
+    ].join('\n'),
+    detail: '创建触发器（DELIMITER 语法）',
+    documentation: 'DELIMITER $$ ... CREATE TRIGGER ... END$$ DELIMITER ;'
+  },
+  {
+    label: 'DELIMITER PROCEDURE',
+    insertText: [
+      'DELIMITER $$',
+      'CREATE PROCEDURE ${1:procedure_name}(${2:params})',
+      'BEGIN',
+      '  ${3:-- 存储过程逻辑}',
+      'END$$',
+      'DELIMITER ;'
+    ].join('\n'),
+    detail: '创建存储过程（DELIMITER 语法）',
+    documentation: 'DELIMITER $$ ... CREATE PROCEDURE ... END$$ DELIMITER ;'
   }
 ]
 

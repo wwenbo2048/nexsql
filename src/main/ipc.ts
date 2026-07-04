@@ -15,14 +15,32 @@ interface AISettings {
   model: string
 }
 
+interface AiConversationMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  status?: 'streaming' | 'done' | 'error'
+}
+
+interface AiConversation {
+  id: string
+  title: string
+  messages: AiConversationMessage[]
+  database?: string
+  createdAt: number
+  updatedAt: number
+}
+
 const store = new Store<{
   connections: ConnectionConfig[]
   aiSettings: AISettings
+  aiConversations: AiConversation[]
 }>({
   name: 'nexsql-config',
   defaults: {
     connections: [],
-    aiSettings: { apiKey: '', model: 'deepseek-chat' }
+    aiSettings: { apiKey: '', model: 'deepseek-chat' },
+    aiConversations: []
   }
 })
 
@@ -879,6 +897,74 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       }
     }
   )
+
+  // ==================== AI 对话持久化 ====================
+
+  // 获取所有对话列表（不含消息体，减少 IPC 传输）
+  ipcMain.handle('ai:getConversations', () => {
+    const conversations = store.get('aiConversations', [])
+    return conversations
+      .map(({ id, title, database, createdAt, updatedAt }) => ({ id, title, database, createdAt, updatedAt }))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  })
+
+  // 获取单个对话的完整消息
+  ipcMain.handle('ai:getConversation', (_event, id: string) => {
+    const conversations = store.get('aiConversations', [])
+    return conversations.find((c) => c.id === id) ?? null
+  })
+
+  // 创建新对话
+  ipcMain.handle('ai:createConversation', (_event, database?: string) => {
+    const conversations = store.get('aiConversations', [])
+    const now = Date.now()
+    const conv: AiConversation = {
+      id: `conv-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      title: '新对话',
+      messages: [],
+      database,
+      createdAt: now,
+      updatedAt: now,
+    }
+    conversations.push(conv)
+    store.set('aiConversations', conversations)
+    return conv
+  })
+
+  // 保存（更新）对话
+  ipcMain.handle('ai:saveConversation', (_event, conv: AiConversation) => {
+    const conversations = store.get('aiConversations', [])
+    const idx = conversations.findIndex((c) => c.id === conv.id)
+    conv.updatedAt = Date.now()
+    if (idx >= 0) {
+      conversations[idx] = conv
+    } else {
+      conversations.push(conv)
+    }
+    store.set('aiConversations', conversations)
+    return true
+  })
+
+  // 删除对话
+  ipcMain.handle('ai:deleteConversation', (_event, id: string) => {
+    const conversations = store.get('aiConversations', [])
+    const filtered = conversations.filter((c) => c.id !== id)
+    store.set('aiConversations', filtered)
+    return true
+  })
+
+  // 清空所有对话
+  ipcMain.handle('ai:clearConversations', () => {
+    store.set('aiConversations', [])
+    return true
+  })
+
+  // 清除应用缓存数据
+  ipcMain.handle('app:clearCache', () => {
+    // 清除 AI 对话
+    store.set('aiConversations', [])
+    return true
+  })
 
   // ==================== AI 自然语言生成 SQL ====================
 

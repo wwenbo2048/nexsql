@@ -30,17 +30,43 @@ import AiSqlPanel from './AiSqlPanel'
 
 /**
  * 智能 SQL 语句分割：
- * 1. 跳过 -- 行注释、# 行注释、slash-star 块注释
- * 2. 尊重字符串（单引号、双引号、反引号）内的分号
- * 3. 按分号拆分为独立语句
+ * 1. 支持 DELIMITER 命令切换语句分隔符（MySQL 客户端语法，用于触发器/存储过程）
+ * 2. 跳过 -- 行注释、# 行注释、块注释
+ * 3. 尊重字符串（单引号、双引号、反引号）内的分隔符
+ * 4. 按当前分隔符拆分为独立语句，DELIMITER 命令本身不会被发送到服务器
  */
-function splitSqlStatements(raw: string): string[] {
+export function splitSqlStatements(raw: string): string[] {
   const statements: string[] = []
   let current = ''
   let i = 0
   const len = raw.length
+  let delimiter = ';' // 默认分隔符
+
+  // 检查 current 是否只包含空白（处于语句之间的位置）
+  const isBetweenStatements = (): boolean =>
+    current.length === 0 || /^\s*$/.test(current)
+
+  // 尝试在当前位置解析 DELIMITER 命令，返回新分隔符或 null
+  const tryParseDelimiter = (): string | null => {
+    const remaining = raw.substring(i)
+    const match = /^DELIMITER[ \t]+(\S+)[ \t]*(?:\r?\n|$)/i.exec(remaining)
+    return match ? match[1] : null
+  }
 
   while (i < len) {
+    // 在语句边界处检测 DELIMITER 命令（始终检查，无论当前分隔符是什么）
+    if (isBetweenStatements()) {
+      const newDelimiter = tryParseDelimiter()
+      if (newDelimiter !== null) {
+        // 跳过整个 DELIMITER 行（含换行符）
+        const fullMatch = /^DELIMITER[ \t]+\S+[ \t]*(?:\r?\n|$)/i.exec(raw.substring(i))!
+        i += fullMatch[0].length
+        delimiter = newDelimiter
+        current = ''
+        continue
+      }
+    }
+
     const ch = raw[i]
 
     // -- 行注释：跳过到行尾
@@ -95,20 +121,31 @@ function splitSqlStatements(raw: string): string[] {
       continue
     }
 
-    // 分号：语句分隔符
-    if (ch === ';') {
-      const stmt = current.trim()
-      if (stmt) statements.push(stmt)
-      current = ''
-      i++
-      continue
+    // 分隔符匹配
+    if (delimiter === ';') {
+      if (ch === ';') {
+        const stmt = current.trim()
+        if (stmt) statements.push(stmt)
+        current = ''
+        i++
+        continue
+      }
+    } else {
+      // 自定义分隔符（如 $$、// 等）
+      if (raw.substring(i, i + delimiter.length) === delimiter) {
+        const stmt = current.trim()
+        if (stmt) statements.push(stmt)
+        current = ''
+        i += delimiter.length
+        continue
+      }
     }
 
     current += ch
     i++
   }
 
-  // 最后一条（可能没有分号结尾）
+  // 最后一条（可能没有分隔符结尾）
   const last = current.trim()
   if (last) statements.push(last)
 
@@ -547,6 +584,66 @@ export default function QueryEditor({ tab }: Props) {
     <div className="flex flex-col h-full">
       {/* 工具栏 */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-light bg-bg-secondary">
+        {/* 服务器 + 数据库 联动选择（最左边） */}
+        <div className="flex items-center gap-1.5">
+          {/* 服务器下拉 */}
+          <div className="relative flex items-center">
+            <Server size={12} className="absolute left-1.5 text-text-muted pointer-events-none" />
+            <select
+              value={selectedConnId}
+              onChange={(e) => handleConnChange(e.target.value)}
+              className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-primary hover:border-accent focus:outline-none focus:border-accent transition-colors cursor-pointer max-w-[140px]"
+              title="选择服务器"
+            >
+              {connections.filter(c => c.type !== 'redis').map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={10} className="absolute right-1 text-text-muted pointer-events-none" />
+          </div>
+
+          {/* 数据库下拉 */}
+          <div className="relative flex items-center">
+            <DatabaseIcon size={12} className="absolute left-1.5 text-text-muted pointer-events-none" />
+            {dbListLoading ? (
+              <div className="flex items-center gap-1 px-2 py-1 text-xs text-text-muted">
+                <Loader2 size={10} className="animate-spin" />
+                加载...
+              </div>
+            ) : dbList.length > 0 ? (
+              <>
+                <select
+                  value={selectedDb}
+                  onChange={(e) => handleDbChange(e.target.value)}
+                  className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-primary hover:border-accent focus:outline-none focus:border-accent transition-colors cursor-pointer max-w-[140px]"
+                  title="选择数据库"
+                >
+                  {!selectedDb && <option value="">未选择</option>}
+                  {dbList.map(db => (
+                    <option key={db.name} value={db.name}>
+                      {db.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={10} className="absolute right-1 text-text-muted pointer-events-none" />
+              </>
+            ) : (
+              <select
+                disabled
+                className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-muted cursor-not-allowed max-w-[140px]"
+                title="请先连接服务器"
+              >
+                <option value="">未连接</option>
+              </select>
+            )}
+          </div>
+        </div>
+
+        {/* 分隔线 */}
+        <div className="w-px h-5 bg-border-light" />
+
         <button
           onClick={() => handleExecute()}
           disabled={loading || !config}
@@ -625,63 +722,8 @@ export default function QueryEditor({ tab }: Props) {
           <Sparkles size={14} />
           AI
         </button>
-        {/* 服务器 + 数据库 联动选择 */}
-        <div className="ml-auto flex items-center gap-1.5">
-          {/* 服务器下拉 */}
-          <div className="relative flex items-center">
-            <Server size={12} className="absolute left-1.5 text-text-muted pointer-events-none" />
-            <select
-              value={selectedConnId}
-              onChange={(e) => handleConnChange(e.target.value)}
-              className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-primary hover:border-accent focus:outline-none focus:border-accent transition-colors cursor-pointer max-w-[140px]"
-              title="选择服务器"
-            >
-              {connections.filter(c => c.type !== 'redis').map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={10} className="absolute right-1 text-text-muted pointer-events-none" />
-          </div>
-
-          {/* 数据库下拉 */}
-          <div className="relative flex items-center">
-            <DatabaseIcon size={12} className="absolute left-1.5 text-text-muted pointer-events-none" />
-            {dbListLoading ? (
-              <div className="flex items-center gap-1 px-2 py-1 text-xs text-text-muted">
-                <Loader2 size={10} className="animate-spin" />
-                加载...
-              </div>
-            ) : dbList.length > 0 ? (
-              <>
-                <select
-                  value={selectedDb}
-                  onChange={(e) => handleDbChange(e.target.value)}
-                  className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-primary hover:border-accent focus:outline-none focus:border-accent transition-colors cursor-pointer max-w-[140px]"
-                  title="选择数据库"
-                >
-                  {!selectedDb && <option value="">未选择</option>}
-                  {dbList.map(db => (
-                    <option key={db.name} value={db.name}>
-                      {db.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={10} className="absolute right-1 text-text-muted pointer-events-none" />
-              </>
-            ) : (
-              <select
-                disabled
-                className="appearance-none bg-bg-primary border border-border-light rounded text-xs pl-7 pr-2 py-1 text-text-muted cursor-not-allowed max-w-[140px]"
-                title="请先连接服务器"
-              >
-                <option value="">未连接</option>
-              </select>
-            )}
-          </div>
-
-          {/* 历史记录下拉 */}
+        {/* 历史记录下拉（靠右） */}
+        <div className="ml-auto">
           <div className="relative">
             <button
               onClick={() => setShowHistoryDropdown((v) => !v)}

@@ -57,6 +57,8 @@ interface TabState {
   closeTabsByConnection: (connectionId: string) => void
   /** 确保浏览器 Tab 存在并激活 */
   ensureBrowserTab: () => void
+  /** 激活浏览器 Tab（切换到对象列表视图） */
+  activateBrowserTab: () => void
 }
 
 export const useTabStore = create<TabState>((set, get) => ({
@@ -252,6 +254,16 @@ export const useTabStore = create<TabState>((set, get) => ({
     const state = get()
     if (!state.tabs.find((t) => t.type === 'browser')) {
       set({ tabs: [createBrowserTab(), ...state.tabs] })
+    }
+  },
+
+  activateBrowserTab: () => {
+    const state = get()
+    const browserTab = state.tabs.find((t) => t.type === 'browser')
+    if (browserTab) {
+      set({ activeTabId: browserTab.id })
+    } else {
+      set({ tabs: [createBrowserTab(), ...state.tabs], activeTabId: BROWSER_TAB_ID })
     }
   }
 }))

@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nexSql — AI 驱动的数据库管理工具</title>
+<meta name="description" content="用自然语言驾驭数据库。AI 驱动的现代化数据库管理工具，深度集成 AI 能力。">
+<link rel="icon" type="image/jpeg" href="icon.jpg">
+<link rel="apple-touch-icon" href="icon.jpg">
+<style>
+/* ==================== Reset & Base ==================== */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;font-size:16px}
+:root{
+  --bg-0:#070710;
+  --bg-1:#0d0d18;
+  --bg-2:#14141f;
+  --card:rgba(255,255,255,.03);
+  --card-hover:rgba(255,255,255,.06);
+  --border:rgba(255,255,255,.08);
+  --border-bright:rgba(99,102,241,.3);
+  --text:#e2e8f0;
+  --text-dim:#94a3b8;
+  --text-muted:#64748b;
+  --accent:#6366f1;
+  --accent-2:#8b5cf6;
+  --accent-3:#06b6d4;
+  --gradient:linear-gradient(135deg,#6366f1 0%,#8b5cf6 50%,#06b6d4 100%);
+  --gradient-soft:linear-gradient(135deg,rgba(99,102,241,.15),rgba(139,92,246,.15),rgba(6,182,212,.15));
+  --glow:0 0 40px rgba(99,102,241,.3);
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  background:var(--bg-0);
+  color:var(--text);
+  overflow-x:hidden;
+  line-height:1.6;
+}
+::selection{background:rgba(99,102,241,.3)}
+a{color:inherit;text-decoration:none}
+
+/* ==================== Animated Background ==================== */
+.bg-grid{
+  position:fixed;
+  inset:0;
+  z-index:0;
+  background-image:
+    linear-gradient(rgba(99,102,241,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(99,102,241,.04) 1px,transparent 1px);
+  background-size:60px 60px;
+  mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 30%,transparent 80%);
+  -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 30%,transparent 80%);
+  pointer-events:none;
+}
+.bg-glow{
+  position:fixed;
+  width:600px;height:600px;
+  border-radius:50%;
+  filter:blur(120px);
+  opacity:.15;
+  pointer-events:none;
+  z-index:0;
+}
+.bg-glow.one{background:#6366f1;top:-200px;left:-100px;animation:float1 18s ease-in-out infinite}
+.bg-glow.two{background:#8b5cf6;top:40%;right:-200px;animation:float2 22s ease-in-out infinite}
+.bg-glow.three{background:#06b6d4;bottom:-200px;left:30%;animation:float3 20s ease-in-out infinite}
+@keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(80px,60px)}}
+@keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-60px,40px)}}
+@keyframes float3{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,-80px)}}
+
+/* ==================== Layout ==================== */
+.container{max-width:1200px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+section{padding:100px 0;position:relative;z-index:1}
+
+/* ==================== Nav ==================== */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  background:rgba(7,7,16,.7);
+  border-bottom:1px solid var(--border);
+  transition:border-color .3s;
+}
+nav.scrolled{border-bottom-color:var(--border-bright)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;height:64px;max-width:1200px;margin:0 auto;padding:0 24px}
+.nav-logo{display:flex;align-items:center;gap:8px;font-weight:800;font-size:18px}
+.nav-logo .logo-icon{
+  width:32px;height:32px;border-radius:8px;
+  background:url('icon.jpg') center/cover,no-repeat;
+  display:block;
+  box-shadow:var(--glow);
+  border:1px solid rgba(255,255,255,.1);
+}
+.nav-logo .logo-text{background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{color:var(--text-dim);font-size:14px;transition:color .2s;font-weight:500}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{
+  padding:8px 20px;border-radius:8px;
+  background:var(--gradient);color:#fff;font-weight:600;font-size:14px;
+  transition:transform .2s,box-shadow .2s;
+}
+.nav-cta:hover{transform:translateY(-1px);box-shadow:var(--glow)}
+@media(max-width:768px){.nav-links{display:none}.nav-links .nav-cta{display:none}}
+
+/* ==================== Hero ==================== */
+#hero{
+  min-height:100vh;display:flex;align-items:center;
+  text-align:center;padding-top:80px;
+}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:6px 16px;border-radius:100px;
+  background:var(--gradient-soft);border:1px solid var(--border-bright);
+  font-size:13px;color:var(--accent-3);font-weight:600;
+  margin-bottom:32px;
+  animation:badgePulse 3s ease-in-out infinite;
+}
+@keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(99,102,241,.3)}50%{box-shadow:0 0 0 8px rgba(99,102,241,0)}}
+.hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--accent-3);animation:dotBlink 1.5s ease-in-out infinite}
+@keyframes dotBlink{0%,100%{opacity:1}50%{opacity:.3}}
+.hero-title{
+  font-size:clamp(2.5rem,7vw,5rem);
+  font-weight:900;line-height:1.1;letter-spacing:-.03em;
+  margin-bottom:24px;
+}
+.hero-title .gradient{
+  background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  background-size:200% 200%;animation:gradientShift 5s ease infinite;
+}
+@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.hero-sub{
+  font-size:clamp(1rem,2vw,1.35rem);
+  color:var(--text-dim);max-width:640px;margin:0 auto 40px;
+  line-height:1.7;
+}
+.hero-actions{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.btn-primary{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:14px 32px;border-radius:12px;
+  background:var(--gradient);color:#fff;font-weight:700;font-size:15px;
+  transition:transform .2s,box-shadow .2s;
+  border:none;cursor:pointer;
+}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(99,102,241,.4)}
+.btn-secondary{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:14px 32px;border-radius:12px;
+  background:var(--card);border:1px solid var(--border);color:var(--text);font-weight:600;font-size:15px;
+  transition:all .2s;cursor:pointer;
+}
+.btn-secondary:hover{background:var(--card-hover);border-color:var(--border-bright)}
+.hero-stats{
+  display:flex;gap:48px;justify-content:center;
+  margin-top:64px;flex-wrap:wrap;
+}
+.stat{text-align:center}
+.stat-num{
+  font-size:28px;font-weight:800;
+  background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.stat-label{font-size:13px;color:var(--text-muted);margin-top:4px}
+
+/* ==================== Section Headers ==================== */
+.section-label{
+  display:inline-block;
+  font-size:13px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--accent);
+  margin-bottom:16px;
+}
+.section-title{
+  font-size:clamp(1.8rem,4vw,2.8rem);
+  font-weight:800;letter-spacing:-.02em;
+  margin-bottom:16px;line-height:1.2;
+}
+.section-desc{
+  font-size:1.05rem;color:var(--text-dim);max-width:600px;
+  margin-bottom:56px;
+}
+.section-center{text-align:center}
+.section-center .section-desc{margin-left:auto;margin-right:auto}
+
+/* ==================== AI Section ==================== */
+#ai{padding-top:120px}
+.ai-demo{
+  display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;
+}
+@media(max-width:900px){.ai-demo{grid-template-columns:1fr}}
+.ai-features{display:flex;flex-direction:column;gap:20px}
+.ai-feature{
+  display:flex;gap:16px;padding:24px;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:16px;
+  transition:all .3s;
+}
+.ai-feature:hover{background:var(--card-hover);border-color:var(--border-bright);transform:translateX(4px)}
+.ai-feature-icon{
+  flex-shrink:0;width:44px;height:44px;border-radius:12px;
+  background:var(--gradient-soft);
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;
+}
+.ai-feature-title{font-weight:700;font-size:16px;margin-bottom:4px}
+.ai-feature-desc{font-size:14px;color:var(--text-dim);line-height:1.6}
+
+/* Chat mockup */
+.chat-mock{
+  background:var(--bg-1);border:1px solid var(--border);
+  border-radius:20px;padding:24px;
+  box-shadow:0 24px 48px rgba(0,0,0,.4),0 0 0 1px rgba(99,102,241,.1);
+  position:relative;overflow:hidden;
+}
+.chat-mock::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--gradient);
+}
+.chat-header{
+  display:flex;align-items:center;gap:8px;
+  padding-bottom:16px;margin-bottom:16px;
+  border-bottom:1px solid var(--border);
+}
+.chat-dot{width:10px;height:10px;border-radius:50%}
+.chat-dot.r{background:#ff5f57}.chat-dot.y{background:#febc2e}.chat-dot.g{background:#28c840}
+.chat-title{margin-left:12px;font-size:13px;color:var(--text-muted);font-weight:600}
+.chat-msg{margin-bottom:16px;animation:msgIn .5s ease both}
+.chat-msg.user{
+  display:flex;justify-content:flex-end;
+}
+.chat-msg .bubble{
+  max-width:80%;padding:12px 16px;border-radius:12px;font-size:13px;line-height:1.6;
+}
+.chat-msg.user .bubble{
+  background:var(--gradient);color:#fff;border-radius:12px 12px 4px 12px;
+}
+.chat-msg.ai .bubble{
+  background:var(--bg-2);border:1px solid var(--border);
+  border-radius:12px 12px 12px 4px;
+  font-family:'SF Mono','Fira Code',monospace;
+}
+.chat-msg .bubble .kw{color:#c084fc}
+.chat-msg .bubble .fn{color:#06b6d4}
+.chat-msg .bubble .st{color:#10b981}
+.chat-msg .bubble .cm{color:var(--text-muted)}
+.chat-typing{
+  display:inline-block;width:8px;height:14px;
+  background:var(--accent);border-radius:1px;
+  animation:cursorBlink 1s steps(2) infinite;
+  vertical-align:text-bottom;
+}
+@keyframes cursorBlink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.chat-msg:nth-child(3){animation-delay:.3s}
+.chat-msg:nth-child(4){animation-delay:.6s}
+
+/* ==================== Features Grid ==================== */
+.features-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:24px;
+}
+@media(max-width:900px){.features-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.features-grid{grid-template-columns:1fr}}
+.feature-card{
+  padding:32px 28px;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:20px;
+  transition:all .3s;
+  position:relative;overflow:hidden;
+}
+.feature-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:var(--gradient);
+  transform:scaleX(0);transform-origin:left;transition:transform .4s;
+}
+.feature-card:hover{
+  background:var(--card-hover);border-color:var(--border-bright);
+  transform:translateY(-4px);
+  box-shadow:0 12px 40px rgba(0,0,0,.3);
+}
+.feature-card:hover::before{transform:scaleX(1)}
+.feature-icon{
+  width:48px;height:48px;border-radius:14px;
+  background:var(--gradient-soft);
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;margin-bottom:20px;
+}
+.feature-title{font-weight:700;font-size:17px;margin-bottom:8px}
+.feature-desc{font-size:14px;color:var(--text-dim);line-height:1.7}
+
+/* ==================== Database Support ==================== */
+.db-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+@media(max-width:900px){.db-grid{grid-template-columns:1fr}}
+.db-card{
+  padding:28px;border-radius:16px;
+  background:var(--card);border:1px solid var(--border);
+  display:flex;align-items:flex-start;gap:20px;
+  transition:all .3s;
+}
+.db-card:hover{border-color:var(--border-bright);background:var(--card-hover)}
+.db-logo{
+  flex-shrink:0;width:56px;height:56px;border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;font-weight:900;color:#fff;
+}
+.db-logo.mysql{background:linear-gradient(135deg,#00758f,#f29111)}
+.db-logo.redis{background:linear-gradient(135deg,#dc382d,#a41e1e)}
+.db-logo.mariadb{background:linear-gradient(135deg,#003545,#c0765a)}
+.db-logo.postgres{background:linear-gradient(135deg,#336791,#65a3d9);opacity:.4}
+.db-info h3{font-size:18px;font-weight:700;margin-bottom:6px}
+.db-info .status{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:12px;font-weight:600;padding:3px 10px;border-radius:100px;
+  margin-bottom:8px;
+}
+.status.ok{background:rgba(16,185,129,.15);color:#10b981}
+.status.warn{background:rgba(245,158,11,.15);color:#f59e0b}
+.status.no{background:rgba(100,116,139,.15);color:var(--text-muted)}
+.db-info p{font-size:13px;color:var(--text-dim)}
+
+.compat-table{
+  margin-top:32px;width:100%;border-collapse:collapse;
+  border-radius:16px;overflow:hidden;
+  border:1px solid var(--border);
+}
+.compat-table th,.compat-table td{
+  padding:14px 20px;text-align:center;font-size:14px;
+  border-bottom:1px solid var(--border);
+}
+.compat-table th{
+  background:var(--bg-1);font-weight:700;color:var(--text);
+  font-size:13px;
+}
+.compat-table td:first-child{text-align:left;font-weight:600;color:var(--text-dim)}
+.compat-table .yes{color:#10b981;font-weight:700}
+.compat-table .no{color:var(--text-muted)}
+.compat-table .partial{color:#f59e0b;font-weight:700}
+.compat-table tbody tr:hover{background:var(--card)}
+
+/* ==================== Tech Stack ==================== */
+.tech-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:16px;
+}
+@media(max-width:768px){.tech-grid{grid-template-columns:repeat(2,1fr)}}
+.tech-item{
+  padding:20px;text-align:center;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:12px;transition:all .3s;
+}
+.tech-item:hover{background:var(--card-hover);border-color:var(--border-bright);transform:translateY(-2px)}
+.tech-name{font-weight:700;font-size:15px;margin-bottom:4px}
+.tech-ver{font-size:12px;color:var(--text-muted)}
+
+/* ==================== Roadmap ==================== */
+.roadmap-list{max-width:700px;margin:0 auto;position:relative}
+.roadmap-list::before{
+  content:'';position:absolute;left:20px;top:8px;bottom:8px;width:2px;
+  background:linear-gradient(180deg,var(--accent),var(--accent-2),var(--accent-3));
+  opacity:.3;
+}
+.roadmap-item{
+  display:flex;gap:24px;padding:16px 0;align-items:flex-start;
+  position:relative;
+}
+.roadmap-dot{
+  flex-shrink:0;width:40px;height:40px;border-radius:12px;
+  background:var(--gradient-soft);border:1px solid var(--border-bright);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;z-index:1;
+}
+.roadmap-content h4{font-size:15px;font-weight:700;margin-bottom:4px}
+.roadmap-content p{font-size:13px;color:var(--text-dim)}
+
+/* ==================== CTA / Download ==================== */
+#download{padding:120px 0;text-align:center}
+.cta-box{
+  padding:64px 48px;border-radius:32px;
+  background:var(--gradient-soft);
+  border:1px solid var(--border-bright);
+  position:relative;overflow:hidden;
+}
+.cta-box::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 30% 50%,rgba(99,102,241,.1),transparent 50%),
+             radial-gradient(circle at 70% 50%,rgba(6,182,212,.1),transparent 50%);
+  pointer-events:none;
+}
+.cta-title{
+  font-size:clamp(1.5rem,3vw,2.2rem);font-weight:800;
+  margin-bottom:12px;position:relative;
+}
+.cta-desc{font-size:1.05rem;color:var(--text-dim);margin-bottom:32px;position:relative}
+.platforms{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;position:relative}
+.platform-btn{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:14px 24px;border-radius:12px;
+  background:var(--bg-1);border:1px solid var(--border);
+  color:var(--text);font-weight:600;font-size:14px;
+  transition:all .2s;cursor:pointer;
+}
+.platform-btn:hover{background:var(--bg-2);border-color:var(--border-bright);transform:translateY(-2px)}
+
+/* ==================== Footer ==================== */
+footer{
+  padding:48px 0;border-top:1px solid var(--border);
+  text-align:center;position:relative;z-index:1;
+}
+footer p{font-size:13px;color:var(--text-muted)}
+footer .footer-brand{
+  font-weight:800;font-size:20px;margin-bottom:8px;
+}
+footer .footer-brand .gradient{
+  background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+
+/* ==================== Scroll Reveal ==================== */
+.reveal{opacity:0;transform:translateY(30px);transition:opacity .7s ease,transform .7s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+
+<!-- Animated Background -->
+<div class="bg-grid"></div>
+<div class="bg-glow one"></div>
+<div class="bg-glow two"></div>
+<div class="bg-glow three"></div>
+
+<!-- Nav -->
+<nav id="nav">
+  <div class="nav-inner">
+    <a href="#hero" class="nav-logo">
+      <img src="icon.jpg" alt="nexSql" class="logo-icon">
+      <span class="logo-text">nexSql</span>
+    </a>
+    <div class="nav-links">
+      <a href="#ai">AI 能力</a>
+      <a href="#features">功能</a>
+      <a href="#database">数据库</a>
+      <a href="#tech">技术栈</a>
+      <a href="#roadmap">路线图</a>
+      <a href="#download" class="nav-cta">下载</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section id="hero">
+  <div class="container">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      AI 驱动 · 自然语言转 SQL
+    </div>
+    <h1 class="hero-title">
+      用自然语言<br>
+      <span class="gradient">驾驭你的数据库</span>
+    </h1>
+    <p class="hero-sub">
+      nexSql 是一款 AI 驱动的现代化数据库管理工具。深度集成 AI 能力，让数据库操作从"写 SQL"变成"说需求"。
+    </p>
+    <div class="hero-actions">
+      <a href="#download" class="btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        立即下载
+      </a>
+      <a href="#ai" class="btn-secondary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        了解 AI 能力
+      </a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><div class="stat-num">MySQL 5.6+</div><div class="stat-label">版本支持</div></div>
+      <div class="stat"><div class="stat-num">3 平台</div><div class="stat-label">macOS / Win / Linux</div></div>
+      <div class="stat"><div class="stat-num">2 数据库</div><div class="stat-label">MySQL + Redis</div></div>
+      <div class="stat"><div class="stat-num">AI 驱动</div><div class="stat-label">DeepSeek 加持</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- AI Section -->
+<section id="ai">
+  <div class="container">
+    <div class="section-center reveal">
+      <div class="section-label">AI POWERED CORE</div>
+      <h2 class="section-title">AI 不只是功能，<br>而是<span class="gradient" style="background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">核心工作流</span></h2>
+      <p class="section-desc">从查询编写到表结构设计，AI 贯穿每一个数据库操作环节。</p>
+    </div>
+
+    <div class="ai-demo">
+      <div class="ai-features reveal">
+        <div class="ai-feature">
+          <div class="ai-feature-icon">💬</div>
+          <div>
+            <div class="ai-feature-title">对话式自然语言转 SQL</div>
+            <div class="ai-feature-desc">输入"查询最近 7 天注册的用户，按时间倒序"，AI 自动生成完整 SQL。不用记语法，不用查文档。</div>
+          </div>
+        </div>
+        <div class="ai-feature">
+          <div class="ai-feature-icon">🧠</div>
+          <div>
+            <div class="ai-feature-title">Schema 感知</div>
+            <div class="ai-feature-desc">AI 实时读取数据库的表结构（表名、字段名、主键、类型），生成的 SQL 精确匹配你的实际结构，不会编造不存在的表或列。</div>
+          </div>
+        </div>
+        <div class="ai-feature">
+          <div class="ai-feature-icon">🔄</div>
+          <div>
+            <div class="ai-feature-title">增量改写</div>
+            <div class="ai-feature-desc">已有 SQL？直接说"加一个按用户名分组的条件"，AI 在原有 SQL 基础上优化和修改，保持风格一致。</div>
+          </div>
+        </div>
+        <div class="ai-feature">
+          <div class="ai-feature-icon">⚡</div>
+          <div>
+            <div class="ai-feature-title">流式输出</div>
+            <div class="ai-feature-desc">实时流式显示生成过程，无需等待。多轮对话上下文记忆，AI 理解你的后续修改意图。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-mock reveal">
+        <div class="chat-header">
+          <div class="chat-dot r"></div>
+          <div class="chat-dot y"></div>
+          <div class="chat-dot g"></div>
+          <span class="chat-title">nexSql AI · 自然语言转 SQL</span>
+        </div>
+        <div class="chat-msg user">
+          <div class="bubble">查询最近 7 天注册的用户，按注册时间倒序，只要前 50 条</div>
+        </div>
+        <div class="chat-msg ai">
+          <div class="bubble"><span class="kw">SELECT</span> id, username, email, created_at<br><span class="kw">FROM</span> <span class="fn">users</span><br><span class="kw">WHERE</span> created_at <span class="kw">&gt;=</span> <span class="kw">DATE_SUB</span>(<span class="kw">NOW</span>(), <span class="kw">INTERVAL</span> <span class="st">7</span> <span class="kw">DAY</span>)<br><span class="kw">ORDER BY</span> created_at <span class="kw">DESC</span><br><span class="kw">LIMIT</span> <span class="st">50</span><span class="chat-typing"></span></div>
+        </div>
+        <div class="chat-msg user">
+          <div class="bubble">再加一个条件：状态必须是 active</div>
+        </div>
+        <div class="chat-msg ai">
+          <div class="bubble"><span class="cm">-- 新增 status = 'active' 条件</span><br><span class="kw">SELECT</span> id, username, email, created_at<br><span class="kw">FROM</span> <span class="fn">users</span><br><span class="kw">WHERE</span> created_at <span class="kw">&gt;=</span> <span class="kw">DATE_SUB</span>(<span class="kw">NOW</span>(), <span class="kw">INTERVAL</span> <span class="st">7</span> <span class="kw">DAY</span>)<br>&nbsp;&nbsp;<span class="kw">AND</span> status <span class="kw">=</span> <span class="st">'active'</span><br><span class="kw">ORDER BY</span> created_at <span class="kw">DESC</span><br><span class="kw">LIMIT</span> <span class="st">50</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features">
+  <div class="container">
+    <div class="section-center reveal">
+      <div class="section-label">FEATURES</div>
+      <h2 class="section-title">完整功能列表</h2>
+      <p class="section-desc">从查询编写到对象管理，从数据同步到性能监控，覆盖数据库管理的每一个场景。</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card reveal">
+        <div class="feature-icon">🔌</div>
+        <div class="feature-title">连接管理</div>
+        <div class="feature-desc">多连接管理，支持分组、颜色标签、SSH 隧道（密码/私钥认证）、SSL 加密连接。密码使用系统级加密存储。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">📝</div>
+        <div class="feature-title">SQL 查询</div>
+        <div class="feature-desc">Monaco Editor 编辑器，四级自动补全，多语句执行，DELIMITER 命令支持，EXPLAIN 执行计划，流式执行日志。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">📊</div>
+        <div class="feature-title">数据表格</div>
+        <div class="feature-desc">高性能虚拟滚动，单元格内联编辑，字段筛选查询（多条件 AND/OR），JSON/BLOB 智能预览，可配置分页。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">🏗️</div>
+        <div class="feature-title">对象设计</div>
+        <div class="feature-desc">可视化表设计器、视图设计器、存储过程设计器、事件设计器。ER 关系图自动生成，可视化外键关联。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">🔄</div>
+        <div class="feature-title">数据库同步</div>
+        <div class="feature-desc">跨连接/跨数据库表结构对比，差异分析（新增/缺失/字段差异），一键同步（生成并执行 DDL），后台执行支持取消。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">💾</div>
+        <div class="feature-title">备份与恢复</div>
+        <div class="feature-desc">全量备份（数据+结构）、仅结构备份、仅数据备份、数据库恢复，全面保障数据安全。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">🗝️</div>
+        <div class="feature-title">Redis 浏览器</div>
+        <div class="feature-desc">Key 浏览与搜索，支持 String/Hash/List/Set/ZSet/Stream 全类型，TTL 管理，实时数据查看与编辑。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">📈</div>
+        <div class="feature-title">性能监控</div>
+        <div class="feature-desc">服务器状态变量，实时进程列表（SHOW PROCESSLIST），各数据库大小统计，关键性能指标可视化。</div>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">🎨</div>
+        <div class="feature-title">主题与布局</div>
+        <div class="feature-desc">深色/浅色主题，多 Tab 页面拖拽排列，可调整面板布局（侧边栏宽度、结果面板高度），全部本地持久化。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Database Support -->
+<section id="database">
+  <div class="container">
+    <div class="section-center reveal">
+      <div class="section-label">DATABASE SUPPORT</div>
+      <h2 class="section-title">支持的数据库</h2>
+      <p class="section-desc">当前深度适配 MySQL 和 Redis，后续将扩展更多数据库类型。</p>
+    </div>
+
+    <div class="db-grid reveal">
+      <div class="db-card">
+        <div class="db-logo mysql">M</div>
+        <div class="db-info">
+          <h3>MySQL</h3>
+          <span class="status ok">● 完整支持</span>
+          <p>核心适配对象，全功能可用。最低支持 5.6，推荐 8.0+。</p>
+        </div>
+      </div>
+      <div class="db-card">
+        <div class="db-logo redis">R</div>
+        <div class="db-info">
+          <h3>Redis</h3>
+          <span class="status ok">● 支持</span>
+          <p>专用浏览器，全类型支持。最低支持 4.0，Stream 类型需 5.0+，推荐 6.0+。</p>
+        </div>
+      </div>
+      <div class="db-card">
+        <div class="db-logo mariadb">MA</div>
+        <div class="db-info">
+          <h3>MariaDB</h3>
+          <span class="status warn">● 兼容可用</span>
+          <p>MySQL 协议兼容，理论可用。推荐 10.5+（未正式测试）。</p>
+        </div>
+      </div>
+      <div class="db-card">
+        <div class="db-logo postgres">PG</div>
+        <div class="db-info">
+          <h3>PostgreSQL</h3>
+          <span class="status no">● 规划中</span>
+          <p>不支持。已在路线图中，计划后续版本支持。</p>
+        </div>
+      </div>
+    </div>
+
+    <table class="compat-table reveal">
+      <thead>
+        <tr>
+          <th>功能</th>
+          <th>MySQL 5.6</th>
+          <th>MySQL 5.7</th>
+          <th>MySQL 8.0+</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>连接、查询、表格编辑</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>对象浏览（表/视图/存储过程/事件/触发器）</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>数据库同步</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>备份与恢复</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>性能监控</td><td class="partial">△ 部分</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td>EXPLAIN TREE 格式</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓ (8.0.16+)</td></tr>
+        <tr><td>SSH 隧道 / SSL 连接</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Tech Stack -->
+<section id="tech">
+  <div class="container">
+    <div class="section-center reveal">
+      <div class="section-label">TECH STACK</div>
+      <h2 class="section-title">技术栈</h2>
+      <p class="section-desc">现代化技术选型，确保性能、安全与开发体验。</p>
+    </div>
+    <div class="tech-grid reveal">
+      <div class="tech-item"><div class="tech-name">Electron</div><div class="tech-ver">29.x</div></div>
+      <div class="tech-item"><div class="tech-name">React</div><div class="tech-ver">18.x</div></div>
+      <div class="tech-item"><div class="tech-name">TypeScript</div><div class="tech-ver">5.x</div></div>
+      <div class="tech-item"><div class="tech-name">electron-vite</div><div class="tech-ver">2.x</div></div>
+      <div class="tech-item"><div class="tech-name">Zustand</div><div class="tech-ver">4.x</div></div>
+      <div class="tech-item"><div class="tech-name">Monaco Editor</div><div class="tech-ver">0.46.x</div></div>
+      <div class="tech-item"><div class="tech-name">Glide Data Grid</div><div class="tech-ver">6.x</div></div>
+      <div class="tech-item"><div class="tech-name">Tailwind CSS</div><div class="tech-ver">3.x</div></div>
+      <div class="tech-item"><div class="tech-name">mysql2</div><div class="tech-ver">3.x</div></div>
+      <div class="tech-item"><div class="tech-name">ioredis</div><div class="tech-ver">5.x</div></div>
+      <div class="tech-item"><div class="tech-name">ssh2</div><div class="tech-ver">1.x</div></div>
+      <div class="tech-item"><div class="tech-name">DeepSeek AI</div><div class="tech-ver">OpenAI 兼容</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- Roadmap -->
+<section id="roadmap">
+  <div class="container">
+    <div class="section-center reveal">
+      <div class="section-label">ROADMAP</div>
+      <h2 class="section-title">后续计划</h2>
+      <p class="section-desc">AI 能力增强是最高优先级，持续让数据库管理更智能。</p>
+    </div>
+    <div class="roadmap-list reveal">
+      <div class="roadmap-item">
+        <div class="roadmap-dot">🔍</div>
+        <div class="roadmap-content">
+          <h4>AI 驱动的查询性能优化建议</h4>
+          <p>分析慢查询，自动推荐索引方案</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">🏗️</div>
+        <div class="roadmap-content">
+          <h4>AI 驱动的表结构设计</h4>
+          <p>描述业务场景，自动生成建表方案</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">🩺</div>
+        <div class="roadmap-content">
+          <h4>AI 驱动的数据库健康检查</h4>
+          <p>一键生成诊断报告，发现潜在问题</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">🤖</div>
+        <div class="roadmap-content">
+          <h4>更多 AI 模型支持</h4>
+          <p>OpenAI GPT、Claude、通义千问等</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">📗</div>
+        <div class="roadmap-content">
+          <h4>PostgreSQL 支持</h4>
+          <p>扩展数据库类型支持</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">📤</div>
+        <div class="roadmap-content">
+          <h4>查询结果导出</h4>
+          <p>CSV / JSON / Excel 多格式导出</p>
+        </div>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-dot">🔌</div>
+        <div class="roadmap-content">
+          <h4>插件系统</h4>
+          <p>自定义扩展，命令面板（Cmd+K）</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Download -->
+<section id="download">
+  <div class="container">
+    <div class="cta-box reveal">
+      <h2 class="cta-title">开始用 AI 驾驭你的数据库</h2>
+      <p class="cta-desc">免费开源，三平台支持。立即下载体验 AI 驱动的数据库管理。</p>
+      <div class="platforms">
+        <a href="download/nexSql-mac.dmg" class="platform-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+          macOS
+        </a>
+        <a href="download/nexSql-win.exe" class="platform-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+          Windows
+        </a>
+        <a href="download/nexSql-linux.AppImage" class="platform-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 0 0-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 0 0-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z"/></svg>
+          Linux
+        </a>
+      </div>
+      <p style="margin-top:24px;font-size:13px;color:var(--text-muted);position:relative">支持 macOS · Windows · Linux 三平台 · MIT License · 开源免费</p>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <div class="footer-brand" style="display:flex;align-items:center;justify-content:center;gap:8px"><img src="icon.jpg" alt="nexSql" style="width:28px;height:28px;border-radius:6px"><span class="gradient">nexSql</span></div>
+    <p>AI 驱动的现代化数据库管理工具 · MIT License </p>
+    <p id="footer-icp"></p>
+  </div>
+</footer>
+
+<script>
+// Nav scroll effect
+const nav = document.getElementById('nav');
+window.addEventListener('scroll', () => {
+  if (window.scrollY > 10) nav.classList.add('scrolled');
+  else nav.classList.remove('scrolled');
+});
+
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// 备案号（年份自动）
+document.getElementById('footer-icp').innerHTML = '© ' + new Date().getFullYear() + ' 杭州知珠网科技有限公司 · <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" style="color:var(--text-muted);text-decoration:none;transition:color .2s" onmouseover="this.style.color=\'var(--accent)\'" onmouseout="this.style.color=\'var(--text-muted)\'">浙ICP备2020043430号-1</a>';
+
+// Smooth scroll for nav links
+document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+  anchor.addEventListener('click', function(e) {
+    e.preventDefault();
+    const target = document.querySelector(this.getAttribute('href'));
+    if (target) {
+      window.scrollTo({
+        top: target.offsetTop - 60,
+        behavior: 'smooth'
+      });
+    }
+  });
+});
+</script>
+</body>
+</html>

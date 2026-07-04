@@ -136,7 +136,26 @@ const api = {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on('ai:streamChunk', handler)
       return () => { ipcRenderer.removeListener('ai:streamChunk', handler) }
-    }
+    },
+    // 对话持久化
+    getConversations: (): Promise<{ id: string; title: string; database?: string; createdAt: number; updatedAt: number }[]> =>
+      ipcRenderer.invoke('ai:getConversations'),
+    getConversation: (id: string): Promise<{ id: string; title: string; messages: any[]; database?: string; createdAt: number; updatedAt: number } | null> =>
+      ipcRenderer.invoke('ai:getConversation', id),
+    createConversation: (database?: string): Promise<{ id: string; title: string; messages: any[]; database?: string; createdAt: number; updatedAt: number }> =>
+      ipcRenderer.invoke('ai:createConversation', database),
+    saveConversation: (conv: { id: string; title: string; messages: any[]; database?: string; createdAt: number; updatedAt: number }): Promise<boolean> =>
+      ipcRenderer.invoke('ai:saveConversation', conv),
+    deleteConversation: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('ai:deleteConversation', id),
+    clearConversations: (): Promise<boolean> =>
+      ipcRenderer.invoke('ai:clearConversations')
+  },
+
+  // 应用缓存管理
+  cache: {
+    clearCache: (): Promise<boolean> =>
+      ipcRenderer.invoke('app:clearCache')
   },
 
   // Redis 操作

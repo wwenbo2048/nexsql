@@ -63,8 +63,10 @@ export default function ConnectionTree() {
   const selectDatabase = useBrowserStore((s) => s.selectDatabase)
   const selectCategory = useBrowserStore((s) => s.selectCategory)
   const selectTable = useBrowserStore((s) => s.selectTable)
+  const refreshList = useBrowserStore((s) => s.refreshList)
   const selectedConnectionId = useBrowserStore((s) => s.selectedConnectionId)
   const selectedDatabase = useBrowserStore((s) => s.selectedDatabase)
+  const activateBrowserTab = useTabStore((s) => s.activateBrowserTab)
   const openRedisBrowser = useTabStore((s) => s.openRedisBrowser)
   const openDbSync = useTabStore((s) => s.openDbSync)
   const openPerformance = useTabStore((s) => s.openPerformance)
@@ -138,6 +140,26 @@ export default function ConnectionTree() {
       selectDatabase(config.id, db.name)
     },
     [selectDatabase]
+  )
+
+  // 双击数据库：切换到对象 Tab 并加载数据库内容
+  const handleDatabaseDoubleClick = useCallback(
+    (config: ConnectionConfig, db: DatabaseInfo) => {
+      // 判断是否切换到了不同的数据库
+      const isSameDb = selectedConnectionId === config.id && selectedDatabase === db.name
+
+      // 切换到对象 Tab（如果当前在查询等其他 Tab）
+      activateBrowserTab()
+
+      if (isSameDb) {
+        // 同一个数据库：强制刷新对象列表
+        refreshList()
+      } else {
+        // 不同数据库：selectDatabase 会重置状态并触发加载
+        selectDatabase(config.id, db.name)
+      }
+    },
+    [selectedConnectionId, selectedDatabase, selectDatabase, refreshList, activateBrowserTab]
   )
 
   const handleCategoryClick = useCallback(
@@ -514,6 +536,7 @@ export default function ConnectionTree() {
                         : 'hover:bg-bg-hover border-l-2 border-l-transparent'
                     }`}
                     onClick={() => handleToggleDatabase(config, db)}
+                    onDoubleClick={() => handleDatabaseDoubleClick(config, db)}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       e.stopPropagation()

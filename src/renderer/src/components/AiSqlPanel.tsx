@@ -13,7 +13,10 @@ import {
   Trash2,
   Eye,
   EyeOff,
-  Save
+  Save,
+  MessageSquarePlus,
+  History,
+  ChevronLeft,
 } from 'lucide-react'
 import type { ConnectionConfig } from '@shared/types'
 
@@ -37,6 +40,14 @@ interface ChatMessage {
   status?: 'streaming' | 'done' | 'error'
 }
 
+interface ConversationMeta {
+  id: string
+  title: string
+  database?: string
+  createdAt: number
+  updatedAt: number
+}
+
 export default function AiSqlPanel({ config, database, existingSql, onInsertSql, onClose }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -48,8 +59,25 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // 启动时检查 API Key
+  // ==================== 对话列表状态 ====================
+  const [conversations, setConversations] = useState<ConversationMeta[]>([])
+  const [activeConvId, setActiveConvId] = useState<string | null>(null)
+  const [showConvList, setShowConvList] = useState(false)
+  const [convListLoading, setConvListLoading] = useState(true)
+
+  // 启动时检查 Api Key
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
+
+  // ==================== 对话列表加载 ====================
+  const loadConversations = useCallback(async () => {
+    try {
+      const list = await window.api.ai.getConversations()
+      setConversations(list)
+      return list
+    } catch {
+      return []
+    }
+  }, [])
 
   useEffect(() => {
     window.api.ai.getSettings().then((s) => {
@@ -57,6 +85,17 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
       if (!s.apiKey) {
         setShowSettings(true)
       }
+    })
+    // 加载对话列表，选中最近一条或新建
+    loadConversations().then(async (list) => {
+      if (list.length > 0) {
+        const conv = await window.api.ai.getConversation(list[0].id)
+        if (conv) {
+          setActiveConvId(conv.id)
+          setMessages(conv.messages)
+        }
+      }
+      setConvListLoading(false)
     })
   }, [])
 
@@ -69,11 +108,81 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
 
   // 自动聚焦
   useEffect(() => {
-    if (hasApiKey && !generating) {
+    if (hasApiKey && !generating && !showConvList) {
       inputRef.current?.focus()
     }
-  }, [hasApiKey, generating])
+  }, [hasApiKey, generating, showConvList])
 
+  // ==================== 对话持久化 ====================
+  const saveConversation = useCallback(async (msgs: ChatMessage[]) => {
+    if (!activeConvId) return
+    const firstUserMsg = msgs.find((m) => m.role === 'user')
+    const title = firstUserMsg
+      ? firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '')
+      : '新对话'
+    const now = Date.now()
+    const meta = conversations.find((c) => c.id === activeConvId)
+    await window.api.ai.saveConversation({
+      id: activeConvId,
+      title,
+      messages: msgs,
+      database,
+      createdAt: meta?.createdAt ?? now,
+      updatedAt: now,
+    })
+    setConversations((prev) =>
+      prev
+        .map((c) => (c.id === activeConvId ? { ...c, title, updatedAt: now } : c))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+    )
+  }, [activeConvId, database, conversations])
+
+  // ==================== 新建对话 ====================
+  const handleNewConversation = useCallback(async () => {
+    const conv = await window.api.ai.createConversation(database)
+    setConversations((prev) =>
+      [{ id: conv.id, title: conv.title, database: conv.database, createdAt: conv.createdAt, updatedAt: conv.updatedAt }, ...prev]
+    )
+    setActiveConvId(conv.id)
+    setMessages([])
+    setError(null)
+    setInput('')
+    setShowConvList(false)
+  }, [database])
+
+  // ==================== 切换对话 ====================
+  const handleSelectConversation = useCallback(async (id: string) => {
+    const conv = await window.api.ai.getConversation(id)
+    if (conv) {
+      setActiveConvId(id)
+      setMessages(conv.messages)
+      setError(null)
+      setInput('')
+      setShowConvList(false)
+    }
+  }, [])
+
+  // ==================== 删除对话 ====================
+  const handleDeleteConversation = useCallback(async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    await window.api.ai.deleteConversation(id)
+    const updated = conversations.filter((c) => c.id !== id)
+    setConversations(updated)
+    if (activeConvId === id) {
+      if (updated.length > 0) {
+        await handleSelectConversation(updated[0].id)
+      } else {
+        const conv = await window.api.ai.createConversation(database)
+        setConversations((prev) =>
+          [{ id: conv.id, title: conv.title, database: conv.database, createdAt: conv.createdAt, updatedAt: conv.updatedAt }, ...prev]
+        )
+        setActiveConvId(conv.id)
+        setMessages([])
+      }
+    }
+  }, [conversations, activeConvId, database, handleSelectConversation])
+
+  // ==================== 生成 SQL ====================
   const handleGenerate = useCallback(async () => {
     const prompt = input.trim()
     if (!prompt || generating) return
@@ -88,9 +197,14 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
     currentRequestId.current = requestId
 
     // 添加用户消息
-    setMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: prompt }])
-    // 添加占位 assistant 消息
-    setMessages((prev) => [...prev, { id: assistantMsgId, role: 'assistant', content: '', status: 'streaming' }])
+    const newMessages: ChatMessage[] = [
+      ...messages,
+      { id: userMsgId, role: 'user', content: prompt },
+      { id: assistantMsgId, role: 'assistant', content: '', status: 'streaming' as const },
+    ]
+    setMessages(newMessages)
+    // 保存（含用户消息，标题来自第一条用户消息）
+    saveConversation(newMessages)
 
     setInput('')
 
@@ -117,44 +231,44 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
 
       removeListener()
 
+      let finalMessages: ChatMessage[] = []
       if (res.success && res.data) {
         const finalSql = res.data
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, content: finalSql, status: 'done' as const } : m
-          )
+        finalMessages = newMessages.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: finalSql, status: 'done' as const } : m
         )
+        setMessages(finalMessages)
       } else if (res.error === '已取消') {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, content: accumulated || '（已取消）', status: 'done' as const }
-              : m
-          )
+        finalMessages = newMessages.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, content: accumulated || '（已取消）', status: 'done' as const }
+            : m
         )
+        setMessages(finalMessages)
       } else {
         const errMsg = res.error || '生成失败'
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, content: `❌ ${errMsg}`, status: 'error' as const } : m
-          )
+        finalMessages = newMessages.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: `❌ ${errMsg}`, status: 'error' as const } : m
         )
+        setMessages(finalMessages)
         setError(errMsg)
       }
+      // 保存最终结果
+      saveConversation(finalMessages)
     } catch (err) {
       removeListener()
       const errMsg = (err as Error).message
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, content: `❌ ${errMsg}`, status: 'error' as const } : m
-        )
+      const finalMessages = newMessages.map((m) =>
+        m.id === assistantMsgId ? { ...m, content: `❌ ${errMsg}`, status: 'error' as const } : m
       )
+      setMessages(finalMessages)
       setError(errMsg)
+      saveConversation(finalMessages)
     } finally {
       setGenerating(false)
       setStreamingText('')
     }
-  }, [input, generating, config, database, existingSql])
+  }, [input, generating, config, database, existingSql, messages, saveConversation])
 
   const handleCancel = useCallback(() => {
     if (currentRequestId.current) {
@@ -172,7 +286,10 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
   const handleClearChat = useCallback(() => {
     setMessages([])
     setError(null)
-  }, [])
+    if (activeConvId) {
+      saveConversation([])
+    }
+  }, [activeConvId, saveConversation])
 
   // ==================== 快捷提示词 ====================
   const quickPrompts = [
@@ -181,134 +298,238 @@ export default function AiSqlPanel({ config, database, existingSql, onInsertSql,
     '统计每个表的记录数',
   ]
 
+  // ==================== 格式化时间 ====================
+  const formatTime = (ts: number): string => {
+    const now = Date.now()
+    const diff = now - ts
+    if (diff < 60000) return '刚刚'
+    if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)} 天前`
+    const d = new Date(ts)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
   return (
     <div className="flex flex-col h-full bg-bg-secondary">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-light bg-bg-tertiary">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} className="text-accent" />
-          <span className="text-xs font-medium text-text-primary">AI 自然语言转 SQL</span>
-          {database && (
-            <span className="text-[10px] text-text-muted flex items-center gap-1">
-              <ArrowRight size={9} /> {database}
-            </span>
-          )}
-          {hasApiKey === false && (
-            <span className="text-[10px] text-yellow-400 flex items-center gap-0.5">
-              <AlertCircle size={9} /> 未配置 API Key
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
-            title="AI 设置"
-          >
-            <Settings size={13} />
-          </button>
-          {messages.length > 0 && (
+        <div className="flex items-center gap-2 min-w-0">
+          {!showConvList ? (
             <button
-              onClick={handleClearChat}
-              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-red-400 transition-colors"
-              title="清空对话"
+              onClick={() => setShowConvList(true)}
+              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
+              title="历史对话"
             >
-              <Trash2 size={13} />
-            </button>
-          )}
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
-            title="关闭"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* 对话区域 */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
-            <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center">
-              <Wand2 size={24} className="text-accent" />
-            </div>
-            <div>
-              <p className="text-sm text-text-secondary mb-1">用自然语言描述你想要的 SQL</p>
-              <p className="text-[11px] text-text-muted">AI 会根据当前数据库表结构自动生成</p>
-            </div>
-            {/* 快捷提示 */}
-            <div className="flex flex-wrap gap-1.5 justify-center max-w-xs">
-              {quickPrompts.map((qp) => (
-                <button
-                  key={qp}
-                  onClick={() => setInput(qp)}
-                  className="px-2 py-1 text-[11px] bg-bg-primary border border-border-light rounded-full text-text-secondary hover:border-accent hover:text-accent transition-colors"
-                >
-                  {qp}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            onInsert={(mode) => onInsertSql(msg.content, mode)}
-          />
-        ))}
-      </div>
-
-      {/* 输入区域 */}
-      <div className="border-t border-border-light p-3">
-        {error && (
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1">
-            <AlertCircle size={11} />
-            <span className="flex-1 truncate">{error}</span>
-            <button onClick={() => setError(null)} className="hover:text-red-300">
-              <X size={11} />
-            </button>
-          </div>
-        )}
-        <div className="relative">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="描述你想要的 SQL，如：查询最近 7 天注册的用户..."
-            rows={2}
-            disabled={generating}
-            className="w-full px-3 py-2 pr-10 bg-bg-primary border border-border-light rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors resize-none disabled:opacity-60"
-          />
-          {generating ? (
-            <button
-              onClick={handleCancel}
-              className="absolute right-2 bottom-2 p-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition-colors"
-              title="停止生成"
-            >
-              <div className="w-3 h-3 bg-red-400 rounded-sm" />
+              <History size={13} />
             </button>
           ) : (
             <button
-              onClick={handleGenerate}
-              disabled={!input.trim()}
-              className="absolute right-2 bottom-2 p-1.5 bg-accent hover:bg-accent-hover text-white rounded transition-colors disabled:opacity-30"
-              title="生成 SQL (Enter)"
+              onClick={() => setShowConvList(false)}
+              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
+              title="返回对话"
             >
-              <Send size={12} />
+              <ChevronLeft size={13} />
             </button>
           )}
-        </div>
-        <div className="flex items-center justify-between mt-1.5">
-          <span className="text-[10px] text-text-muted">
-            {config && database ? '已加载表结构上下文' : '未连接数据库，无法提供表结构'}
+          <Sparkles size={14} className="text-accent flex-shrink-0" />
+          <span className="text-xs font-medium text-text-primary truncate">
+            {showConvList ? '历史对话' : 'AI 自然语言转 SQL'}
           </span>
-          <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+          {!showConvList && database && (
+            <span className="text-[10px] text-text-muted flex items-center gap-1 flex-shrink-0">
+              <ArrowRight size={9} /> {database}
+            </span>
+          )}
+          {!showConvList && hasApiKey === false && (
+            <span className="text-[10px] text-yellow-400 flex items-center gap-0.5 flex-shrink-0">
+              <AlertCircle size={9} /> 未配置
+            </span>
+          )}
         </div>
+        {!showConvList && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={handleNewConversation}
+              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-accent transition-colors"
+              title="新建对话"
+            >
+              <MessageSquarePlus size={13} />
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
+              title="AI 设置"
+            >
+              <Settings size={13} />
+            </button>
+            {messages.length > 0 && (
+              <button
+                onClick={handleClearChat}
+                className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-red-400 transition-colors"
+                title="清空当前对话"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
+              title="关闭"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* ==================== 对话列表视图 ==================== */}
+      {showConvList ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* 新建按钮 */}
+          <div className="p-2 border-b border-border-light">
+            <button
+              onClick={handleNewConversation}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-accent hover:bg-accent-hover text-white rounded transition-colors"
+            >
+              <MessageSquarePlus size={13} />
+              新建对话
+            </button>
+          </div>
+          {/* 列表 */}
+          <div className="flex-1 overflow-y-auto">
+            {convListLoading ? (
+              <div className="flex items-center justify-center py-8 text-text-muted text-xs">
+                <Loader2 size={14} className="animate-spin mr-1" />
+                加载中...
+              </div>
+            ) : conversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-text-muted text-xs gap-2">
+                <MessageSquarePlus size={24} className="opacity-30" />
+                <span>暂无历史对话</span>
+              </div>
+            ) : (
+              conversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  onClick={() => handleSelectConversation(conv.id)}
+                  className={`group flex items-start gap-2 px-3 py-2 border-b border-border-light/50 cursor-pointer transition-colors ${
+                    activeConvId === conv.id ? 'bg-accent/10' : 'hover:bg-bg-hover'
+                  }`}
+                >
+                  <Sparkles
+                    size={12}
+                    className={`mt-0.5 flex-shrink-0 ${activeConvId === conv.id ? 'text-accent' : 'text-text-muted'}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-xs truncate ${activeConvId === conv.id ? 'text-accent font-medium' : 'text-text-primary'}`}>
+                      {conv.title}
+                    </div>
+                    <div className="text-[10px] text-text-muted mt-0.5">
+                      {formatTime(conv.updatedAt)}
+                      {conv.database && <span className="ml-1.5">· {conv.database}</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteConversation(conv.id, e)}
+                    className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                    title="删除对话"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* ==================== 对话区域 ==================== */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
+                <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center">
+                  <Wand2 size={24} className="text-accent" />
+                </div>
+                <div>
+                  <p className="text-sm text-text-secondary mb-1">用自然语言描述你想要的 SQL</p>
+                  <p className="text-[11px] text-text-muted">AI 会根据当前数据库表结构自动生成</p>
+                </div>
+                {/* 快捷提示 */}
+                <div className="flex flex-wrap gap-1.5 justify-center max-w-xs">
+                  {quickPrompts.map((qp) => (
+                    <button
+                      key={qp}
+                      onClick={() => setInput(qp)}
+                      className="px-2 py-1 text-[11px] bg-bg-primary border border-border-light rounded-full text-text-secondary hover:border-accent hover:text-accent transition-colors"
+                    >
+                      {qp}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                onInsert={(mode) => onInsertSql(msg.content, mode)}
+              />
+            ))}
+          </div>
+
+          {/* 输入区域 */}
+          <div className="border-t border-border-light p-3">
+            {error && (
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1">
+                <AlertCircle size={11} />
+                <span className="flex-1 truncate">{error}</span>
+                <button onClick={() => setError(null)} className="hover:text-red-300">
+                  <X size={11} />
+                </button>
+              </div>
+            )}
+            <div className="relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="描述你想要的 SQL，如：查询最近 7 天注册的用户..."
+                rows={2}
+                disabled={generating}
+                className="w-full px-3 py-2 pr-10 bg-bg-primary border border-border-light rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors resize-none disabled:opacity-60"
+              />
+              {generating ? (
+                <button
+                  onClick={handleCancel}
+                  className="absolute right-2 bottom-2 p-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition-colors"
+                  title="停止生成"
+                >
+                  <div className="w-3 h-3 bg-red-400 rounded-sm" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleGenerate}
+                  disabled={!input.trim()}
+                  className="absolute right-2 bottom-2 p-1.5 bg-accent hover:bg-accent-hover text-white rounded transition-colors disabled:opacity-30"
+                  title="生成 SQL (Enter)"
+                >
+                  <Send size={12} />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
+              <span className="text-[10px] text-text-muted">
+                {config && database ? '已加载表结构上下文' : '未连接数据库，无法提供表结构'}
+              </span>
+              <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* 设置弹窗 */}
       {showSettings && (

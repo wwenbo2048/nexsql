@@ -656,9 +656,8 @@ export default function DataTable({ tab }: Props) {
     if (val === null || val === undefined) {
       return { kind: GridCellKind.Text, data: 'NULL', displayData: 'NULL', allowOverlay: true, style: 'faded' as const, themeOverride: { textLight: '#71717a', baseFontStyle: 'italic 12px' } }
     }
-    if (typeof val === 'boolean' || (typeof val === 'number' && (val === 0 || val === 1) && colInfo.type.toLowerCase().includes('tinyint'))) {
-      const boolVal = val === true || val === 1
-      return { kind: GridCellKind.Boolean, data: boolVal, allowOverlay: false }
+    if (typeof val === 'boolean') {
+      return { kind: GridCellKind.Boolean, data: val, allowOverlay: false }
     }
     const str = typeof val === 'object' ? JSON.stringify(val) : String(val)
     if (isJsonString(str)) {
@@ -825,7 +824,15 @@ export default function DataTable({ tab }: Props) {
 
       // Ctrl+C / Ctrl+V（行级操作）
       if ((e.ctrlKey || e.metaKey)) {
-        if (e.key === 'c' || e.key === 'C') { e.preventDefault(); handleCopyRows() }
+        if (e.key === 'c' || e.key === 'C') {
+          // 若用户在网格外框选了文本（如右侧 DDL 面板），放行默认复制
+          const textSel = window.getSelection()
+          if (textSel && textSel.toString().length > 0 && containerRef.current) {
+            const anchor = textSel.anchorNode
+            if (anchor && !containerRef.current.contains(anchor)) return
+          }
+          e.preventDefault(); handleCopyRows()
+        }
         if (e.key === 'v' || e.key === 'V') { e.preventDefault(); handlePasteRows() }
       }
     }
@@ -940,7 +947,7 @@ export default function DataTable({ tab }: Props) {
                 <span className="text-[11px] font-medium text-text-secondary">字段筛选条件</span>
                 <div className="flex items-center gap-1">
                   <button onClick={addCondition} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] hover:bg-bg-hover text-text-secondary hover:text-accent transition-colors"><Plus size={11} /> 添加条件</button>
-                  <button onClick={applyFilter} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-accent/20 text-accent hover:bg-accent/30 transition-colors"><Check size={11} /> 应用</button>
+                  <button onClick={applyFilter} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-accent/20 text-accent hover:bg-accent/30 transition-colors"><Check size={11} /> 查询</button>
                   {conditions.length > 0 && <button onClick={clearFilter} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] hover:bg-bg-hover text-text-secondary hover:text-red-400 transition-colors"><X size={11} /> 清除</button>}
                 </div>
               </div>

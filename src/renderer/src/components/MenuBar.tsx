@@ -20,7 +20,8 @@ import {
   Wrench,
   Github,
   Info,
-  Settings
+  Settings,
+  Eraser
 } from 'lucide-react'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
@@ -269,6 +270,16 @@ export default function MenuBar() {
         if (config && selectedDatabase && selectedTable) {
           window.api.db.query(config, `OPTIMIZE TABLE \`${selectedTable}\``, selectedDatabase)
         }
+        setOpenMenu(null)
+      }
+    },
+    { label: '', separator: true },
+    {
+      label: '清除应用缓存数据...',
+      icon: <Eraser size={13} />,
+      danger: true,
+      onClick: () => {
+        window.dispatchEvent(new CustomEvent('nexsql-clear-cache'))
         setOpenMenu(null)
       }
     },

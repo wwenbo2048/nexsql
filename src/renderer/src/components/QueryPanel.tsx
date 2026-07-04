@@ -5,6 +5,7 @@ import { Play, Loader2, Save, AlertCircle, Database, Clock, Check, Download, Cod
 import { useBrowserStore } from '@stores/browser'
 import { useConnectionStore } from '@stores/connection'
 import type { ColumnInfo } from '@shared/types'
+import { splitSqlStatements } from './QueryEditor'
 
 // MySQL 关键字
 const SQL_KEYWORDS = [
@@ -33,6 +34,7 @@ const SQL_KEYWORDS = [
   'UPPER', 'LOWER', 'REPLACE', 'LEFT', 'RIGHT', 'LPAD', 'RPAD',
   'GROUP_CONCAT', 'DISTINCT', 'HAVING',
   'WITH', 'RECURSIVE',
+  'DELIMITER',
 ]
 
 // 不应被当作表别名的 SQL 关键字
@@ -172,29 +174,8 @@ export default function QueryPanel() {
 
     if (!sqlToExecute.trim()) return
 
-    // 按分号分割多语句（忽略字符串内的分号）
-    const statements: string[] = []
-    let current = ''
-    let inSingleQuote = false
-    let inDoubleQuote = false
-    let inBacktick = false
-    for (let i = 0; i < sqlToExecute.length; i++) {
-      const ch = sqlToExecute[i]
-      const next = sqlToExecute[i + 1]
-      if (ch === '\\' && next) { current += ch + next; i++; continue }
-      if (ch === "'" && !inDoubleQuote && !inBacktick) inSingleQuote = !inSingleQuote
-      else if (ch === '"' && !inSingleQuote && !inBacktick) inDoubleQuote = !inDoubleQuote
-      else if (ch === '`' && !inSingleQuote && !inDoubleQuote) inBacktick = !inBacktick
-      if (ch === ';' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-        const stmt = current.trim()
-        if (stmt && !stmt.startsWith('--')) statements.push(stmt)
-        current = ''
-      } else {
-        current += ch
-      }
-    }
-    const lastStmt = current.trim()
-    if (lastStmt && !lastStmt.startsWith('--')) statements.push(lastStmt)
+    // 智能分割语句（支持 DELIMITER、注释、字符串）
+    const statements = splitSqlStatements(sqlToExecute)
 
     setExecuting(true)
     setError(null)

@@ -1,121 +1,178 @@
-<div align="center">
-
 # nexSql
 
-**一款现代化的桌面数据库管理客户端**
+> **AI 驱动的现代化数据库管理工具**，用自然语言驾驭你的数据库。
 
-*基于 Electron + React 构建，专为 MySQL 设计的数据库可视化与开发工具*
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Electron](https://img.shields.io/badge/Electron-29-47848F?logo=electron)](https://www.electronjs.org/)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript)](https://www.typescriptlang.org/)
-
-</div>
+基于 Electron + React 构建，深度集成 AI 能力，让数据库操作从"写 SQL"变成"说需求"。
 
 ---
 
-## 功能特性
+## AI 驱动的核心能力
 
-### 数据库管理
-- **多连接管理** — 支持同时管理多个 MySQL 连接，快速切换
-- **连接分组与标签** — 按环境（开发/测试/生产）分组显示连接，支持自定义标签徽章
-- **数据库浏览** — 树形结构展示：表、视图、函数/存储过程、事件四大分类
-- **新建/删除数据库** — 直接在连接树上操作，支持自定义字符集和排序规则
-- **连接池管理** — 自动维护数据库连接，支持断线重连
-- **安全连接** — 支持 SSH 隧道连接和 SSL 加密连接
-- **密码加密存储** — 使用系统级安全存储（Windows DPAPI / macOS Keychain / Linux libsecret）加密保存连接密码
+nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是贯穿核心工作流的设计理念：
+
+### 自然语言转 SQL
+> 不用记语法，不用查文档。直接用中文描述你的需求，AI 自动生成精准的 SQL。
+
+- **对话式生成**：输入"查询最近 7 天注册的用户，按时间倒序"，AI 自动生成完整 SQL
+- **Schema 感知**：AI 实时读取你当前数据库的表结构（表名、字段名、主键、类型），生成的 SQL 精确匹配你的实际结构，不会编造不存在的表或列
+- **增量改写**：已有 SQL？直接说"加一个按用户名分组的条件"，AI 在原有 SQL 基础上优化和修改
+- **流式输出**：实时流式显示生成过程，无需等待
+- **安全可控**：API Key 本地加密存储，数据不经第三方服务器（仅发送表结构和需求描述到 AI）
+
+### AI 上下文理解
+- 自动提取当前数据库的完整 DDL 结构作为 AI 上下文
+- AI 理解字段类型、主键、索引关系，生成更优的查询方案
+- 支持复杂多表关联查询的自然语言描述
+
+### 对话历史管理
+- 多轮对话上下文记忆，AI 理解你的后续修改意图
+- 对话列表本地持久化，随时回顾历史对话
+- 支持新建 / 切换 / 删除对话
+
+### AI 模型配置
+- 默认集成 **DeepSeek**（OpenAI 兼容协议）
+- 支持自定义 API Key 和模型名称
+- 低温度参数（temperature: 0.1）确保 SQL 输出稳定可靠
+
+---
+
+## 支持的数据库
+
+| 数据库 | 支持状态 | 最低版本 | 推荐版本 | 说明 |
+|--------|:-------:|---------|---------|------|
+| **MySQL** | ✅ 完整支持 | 5.6 | 8.0+ | 核心适配对象，全功能可用 |
+| **MariaDB** | ⚠️ 兼容可用 | 10.0 | 10.5+ | MySQL 协议兼容，理论可用（未正式测试） |
+| **Redis** | ✅ 支持 | 4.0 | 6.0+ | Stream 类型需 5.0+ |
+
+**不支持**：PostgreSQL、SQLite、SQL Server、Oracle、MongoDB 等。
+
+### MySQL 版本兼容性细节
+
+| 功能 | MySQL 5.6 | MySQL 5.7 | MySQL 8.0+ |
+|------|:---------:|:---------:|:----------:|
+| 连接、查询、表格编辑 | ✅ | ✅ | ✅ |
+| 对象浏览（表/视图/存储过程/事件/触发器） | ✅ | ✅ | ✅ |
+| 数据库同步 | ✅ | ✅ | ✅ |
+| 备份与恢复 | ✅ | ✅ | ✅ |
+| 性能监控 | ⚠️ 部分 | ✅ | ✅ |
+| EXPLAIN TREE 格式 | ❌ | ❌ | ✅ (8.0.16+) |
+| SSH 隧道 / SSL 连接 | ✅ | ✅ | ✅ |
+
+---
+
+## 完整功能列表
+
+### 连接管理
+- 多连接管理，支持分组、颜色标签
+- SSH 隧道连接（密码 / 私钥认证）
+- SSL 加密连接
+- 密码安全存储（macOS Keychain / Windows DPAPI / Linux libsecret）
+
+### SQL 查询
+- **Monaco Editor** 编辑器，语法高亮、代码折叠
+- 四级 SQL 自动补全（关键字、表名、字段名、SQL 模板）
+- 多语句执行（支持 `;` 分隔）
+- `DELIMITER` 命令支持（触发器、存储过程的客户端命令解析）
+- 选中执行 / 全部执行
+- 查询执行计划（EXPLAIN），MySQL 8.0+ 自动使用 TREE 格式
+- 实时流式执行日志
+- 查询历史记录（本地持久化，最近 20 条）
+- 保存的查询管理
 
 ### 数据表格
-- **高性能数据展示** — 基于 `react-data-grid`，支持虚拟滚动，轻松处理百万级数据
-- **单元格内编辑** — 直接在单元格中编辑数据，支持 NULL、空字符串、时间选择器
-- **智能字段识别** — 自动检测 JSON、二进制/BLOB、布尔等字段类型并差异化展示
-- **数据预览增强** — JSON 字段格式化预览、BLOB 十六进制显示、布尔值彩色徽章、长文本智能截断
-- **多行批量操作** — 支持行选择、批量删除、批量插入，事务保障原子性
-- **排序与筛选** — 列排序、Navicat 风格多条件筛选（支持 AND/OR 逻辑组合）
-
-### 查询面板
-- **Monaco 编辑器** — VSCode 同款编辑器，语法高亮 + 智能提示
-- **SQL 自动补全** — 四级智能提示：关键字、表名、列名、函数
-- **多语句执行** — 支持 `;` 分隔的多 SQL 批量执行，智能处理引号内分号
-- **SQL 格式化** — 一键美化 SQL（关键字大写、自动缩进），基于 `sql-formatter`
-- **查询执行计划** — EXPLAIN 可视化，支持 TREE 格式（MySQL 8.0.16+）和标准表格格式，颜色编码访问类型与效率评估
-- **查询历史** — 自动记录执行历史，支持搜索、复用、持久化存储
-- **查询结果导出** — 支持导出为 CSV / JSON
-
-### 数据导入导出
-- **导出格式** — CSV、JSON、SQL（含 DDL + INSERT）
-- **导入支持** — CSV、JSON、SQL 文件导入，支持引号转义等复杂格式
-- **数据库备份/恢复** — 纯 SQL dump 导出（DDL + 批量 INSERT），支持一键恢复
+- 高性能虚拟滚动（基于 Glide Data Grid）
+- 单元格内联编辑（双击编辑）
+- 字段筛选查询（多条件 AND/OR 组合）
+- JSON / BLOB 数据智能预览
+- 可配置分页大小（本地持久化）
+- 批量操作
 
 ### 对象设计
-- **表设计器** — 列定义、索引、外键、触发器、表选项可视化编辑
-- **视图设计** — 可视化创建和编辑视图
-- **函数/存储过程** — 支持创建、编辑、执行存储过程
-- **事件调度器** — 创建和管理 MySQL 事件
-- **ER 关系图** — 基于外键的 SVG 可视化关系图，支持拖拽表节点、画布平移、滚轮缩放
-- **表结构对比** — 跨连接/跨数据库的列差异检测，自动生成 ALTER TABLE 同步 SQL
+- **表设计器**：可视化创建/编辑表结构（字段、类型、默认值、注释、索引、外键）
+- **视图设计器**：查看/编辑视图定义
+- **存储过程设计器**：函数 / 存储过程管理
+- **事件设计器**：定时任务管理
+- **ER 关系图**：自动生成表关系图，可视化外键关联
 
-### SQL 片段管理
-- **片段库** — 创建、分类、搜索常用 SQL 模板
-- **变量占位符** — 使用 `{{变量名}}` 定义参数化模板，运行时自动提示替换
-- **快捷操作** — 一键插入到查询编辑器、直接运行、复制
+### 数据库同步
+- 跨连接/跨数据库表结构对比
+- 差异分析（新增表/缺失表/字段差异）
+- 一键同步（生成并执行 DDL）
+- 后台执行，支持取消
 
-### 界面体验
-- **三栏布局** — 左栏连接树 + 中栏对象列表 + 右栏详情/数据，可拖拽调整宽度
-- **顶部菜单栏** — Navicat 风格菜单，含文件/视图/对象/工具/帮助五大类
-- **右键菜单** — 全面的上下文菜单操作
-- **多标签页** — 支持同时打开多个表/查询，标签页拖拽排序 & 持久化存储
-- **深色主题** — 专业深色界面，长时间使用不累眼
+### 数据库备份与恢复
+- 全量备份（数据 + 结构）
+- 仅结构备份
+- 仅数据备份
+- 数据库恢复
+
+### Redis 浏览器
+- Key 浏览与搜索
+- 支持 String / Hash / List / Set / ZSet / Stream 类型
+- TTL 管理
+- 实时数据查看与编辑
+
+### 性能监控
+- 服务器状态变量（连接数、缓冲池、线程等）
+- 实时进程列表（SHOW PROCESSLIST）
+- 各数据库大小统计
+- 关键性能指标可视化
+
+### 其他
+- SQL 片段管理（模板分类、快捷插入）
+- 深色 / 浅色主题
+- 多 Tab 页面，支持拖拽排列
+- 可调整面板布局（侧边栏宽度、结果面板高度等，本地持久化）
+- 快捷键支持（Ctrl+Enter 执行、Ctrl+S 保存等）
 
 ---
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 桌面框架 | Electron 29 |
-| 构建工具 | Electron-Vite + Vite 5 |
-| 前端框架 | React 18 + TypeScript 5 |
-| 状态管理 | Zustand |
-| 样式方案 | TailwindCSS 3 |
-| 数据表格 | react-data-grid 7 (beta) |
-| 代码编辑器 | Monaco Editor |
-| 数据库驱动 | mysql2/promise |
-| SQL 格式化 | sql-formatter |
-| 图标库 | Lucide React |
-| 持久化 | electron-store |
+| 层 | 技术 | 版本 |
+|----|------|------|
+| 框架 | Electron | 29.x |
+| 构建工具 | electron-vite | 2.x |
+| 前端框架 | React | 18.x |
+| 状态管理 | Zustand | 4.x |
+| 编辑器 | Monaco Editor | 0.46.x |
+| 数据表格 | Glide Data Grid | 6.x |
+| MySQL 驱动 | mysql2 | 3.x |
+| Redis 驱动 | ioredis | 5.x |
+| SSH 隧道 | ssh2 | 1.x |
+| AI 模型 | DeepSeek (OpenAI 兼容) | - |
+| 样式 | Tailwind CSS | 3.x |
+| 语言 | TypeScript | 5.x |
 
 ---
 
-## 快速开始
+## 环境要求
 
-### 环境要求
+- **Node.js** >= 18
+- **npm** >= 9（或使用 yarn / pnpm）
+- 操作系统：macOS / Windows / Linux
 
-- Node.js >= 18
-- npm >= 9
+---
 
-### 安装与运行
+## 开发与构建
+
+### 安装依赖
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-username/nexsql.git
-cd nexsql
-
-# 安装依赖
 npm install
-
-# 开发模式
-npm run dev
-
-# 构建
-npm run build
-
-# 预览构建结果
-npm run preview
 ```
 
-### 打包发布
+> 国内网络环境可使用镜像源加速 Electron 下载（已配置在 `.npmrc` 中）。
+
+### 开发模式
+
+```bash
+npm run dev
+```
+
+启动热重载开发服务器。
+
+### 打包构建
 
 ```bash
 # macOS
@@ -128,7 +185,18 @@ npm run build:win
 npm run build:linux
 ```
 
-打包产物位于 `release/` 目录。
+构建产物输出到 `release/` 目录：
+- **macOS**：`.dmg` + `.zip`
+- **Windows**：`.exe`（NSIS 安装包）+ `.zip`
+- **Linux**：`.AppImage` + `.deb`
+
+### 普通构建（不打包）
+
+```bash
+npm run build
+```
+
+仅编译代码到 `out/` 目录，用于调试。
 
 ---
 
@@ -137,95 +205,84 @@ npm run build:linux
 ```
 nexSql/
 ├── src/
-│   ├── main/                    # Electron 主进程
-│   │   ├── index.ts             # 主进程入口
-│   │   ├── ipc.ts               # IPC 通信处理
-│   │   ├── crypto.ts            # 密码加密/解密（safeStorage）
-│   │   └── services/
-│   │       └── db.ts            # 数据库服务层
-│   ├── preload/                 # Preload 脚本
-│   │   └── index.ts             # 安全 API 暴露
-│   ├── renderer/                # 前端渲染进程
+│   ├── main/                 # Electron 主进程
+│   │   ├── index.ts          # 应用入口
+│   │   ├── ipc.ts            # IPC 通信注册
+│   │   ├── crypto.ts         # 密码加密/解密
+│   │   ├── uuid.ts           # UUID 生成
+│   │   ├── services/         # 业务服务层
+│   │   │   ├── db.ts         # MySQL 数据库服务
+│   │   │   ├── redis.ts      # Redis 服务
+│   │   │   ├── ai.ts         # AI 自然语言转 SQL 服务
+│   │   │   └── ssh-tunnel.ts # SSH 隧道
+│   │   └── utils/
+│   │       └── http.ts       # HTTP 工具
+│   ├── preload/              # 预加载脚本（IPC 桥接）
+│   │   ├── index.ts
+│   │   └── index.d.ts        # 类型声明
+│   ├── renderer/             # 渲染进程（React 前端）
 │   │   └── src/
-│   │       ├── App.tsx          # 根组件
-│   │       ├── components/      # UI 组件
-│   │       │   ├── MenuBar.tsx           # 顶部菜单栏
-│   │       │   ├── Sidebar.tsx           # 侧栏
-│   │       │   ├── ConnectionTree.tsx     # 连接树（分组/标签）
-│   │       │   ├── MiddlePanel.tsx       # 中间对象列表面板
-│   │       │   ├── DataTable.tsx         # 数据表格（增强预览）
-│   │       │   ├── QueryPanel.tsx        # SQL 查询面板
-│   │       │   ├── QueryEditor.tsx       # 查询编辑器（含 EXPLAIN）
-│   │       │   ├── TableDetailPanel.tsx  # 表详情面板
-│   │       │   ├── TableDesign.tsx       # 表结构设计师
-│   │       │   ├── ConnectionModal.tsx   # 连接配置弹窗
-│   │       │   ├── ContextMenu.tsx       # 右键菜单
-│   │       │   ├── TabBar.tsx            # 标签栏（拖拽排序）
-│   │       │   ├── ERDiagramView.tsx     # ER 关系图
-│   │       │   ├── ExplainPlanView.tsx   # 执行计划可视化
-│   │       │   ├── TableCompareView.tsx  # 表结构对比
-│   │       │   ├── SnippetPanel.tsx      # SQL 片段管理
-│   │       │   └── editors/             # 表编辑器子组件
-│   │       ├── stores/          # Zustand 状态管理
-│   │       │   ├── browser.ts   # 浏览器/对象状态
-│   │       │   ├── connection.ts # 连接状态
-│   │       │   ├── tab.ts       # 标签页（持久化）
-│   │       │   ├── ui.ts        # UI 状态
-│   │       │   └── snippet.ts   # SQL 片段
-│   │       └── index.css        # 全局样式 + Tailwind
-│   └── shared/                  # 主进程与渲染进程共享类型
+│   │       ├── components/   # UI 组件
+│   │       ├── stores/       # Zustand 状态管理
+│   │       ├── App.tsx       # 根组件
+│   │       └── main.tsx      # 渲染进程入口
+│   └── shared/
 │       └── types/
-│           └── index.ts
-├── resources/                   # 应用图标等资源
-├── electron.vite.config.ts      # Electron-Vite 配置
-├── tailwind.config.js           # Tailwind 配置
-├── tsconfig.json                # TypeScript 配置
+│           └── index.ts      # 共享类型定义
+├── electron.vite.config.ts   # electron-vite 配置
+├── electron-builder.yml      # 打包配置
+├── tailwind.config.js        # Tailwind CSS 配置
 └── package.json
 ```
 
 ---
 
-## 截图
+## 后续计划
 
-> 启动后界面包含：顶部菜单栏、左侧连接树、中间对象列表、右侧数据/详情面板，三栏可自由拖拽。
+### AI 能力增强（优先级最高）
+- [ ] AI 驱动的查询性能优化建议（分析慢查询，自动推荐索引）
+- [ ] AI 驱动的表结构设计（描述业务场景，自动生成建表方案）
+- [ ] AI 驱动的数据异常检测（自动发现脏数据、重复数据）
+- [ ] AI 驱动的数据库健康检查报告（一键生成诊断报告）
+- [ ] 支持更多 AI 模型（OpenAI GPT、Claude、通义千问等）
+- [ ] AI 对话中直接预览和执行生成的 SQL
+- [ ] AI 驱动的数据库文档自动生成
+
+### 数据库扩展
+- [ ] PostgreSQL 支持
+- [ ] SQLite 支持
+- [ ] MongoDB 支持
+- [ ] SQL Server 支持
+
+### SQL 查询增强
+- [ ] SQL 格式化与美化（集成 sql-formatter）
+- [ ] SQL 语法检查与错误提示
+- [ ] 查询结果导出（CSV / JSON / Excel）
+- [ ] 可视化查询构建器（拖拽式）
+
+### 数据表格
+- [ ] 多行编辑模式
+- [ ] 外键关联数据预览
+- [ ] 数据图表可视化（柱状图/折线图/饼图）
+
+### 数据库管理
+- [ ] 数据迁移工具（跨数据库类型）
+- [ ] 数据生成器（测试数据填充）
+- [ ] 表数据对比与合并
+
+### 协作与云端
+- [ ] 连接配置云同步
+- [ ] 团队共享 SQL 片段
+- [ ] 查询历史云备份
+
+### 用户体验
+- [ ] 插件系统
+- [ ] 自定义快捷键
+- [ ] 命令面板（Cmd+K）
+- [ ] 工作区多开
 
 ---
 
-## 开发计划
+## License
 
-### 已完成
-
-- [x] 多标签页系统（拖拽排序 + 持久化）
-- [x] 查询历史记录（持久化存储 + UI 面板）
-- [x] SSH 隧道连接 + SSL 加密连接
-- [x] 批量操作事务支持
-- [x] Monaco SQL 智能补全（表名/列名动态上下文）
-- [x] 密码加密存储（系统级 safeStorage）
-- [x] 查询执行计划可视化（EXPLAIN）
-- [x] ER 关系图（SVG 外键可视化）
-- [x] 数据库备份/恢复（纯 SQL dump）
-- [x] 表结构对比（跨数据库 diff + ALTER 同步 SQL）
-- [x] 连接分组/标签
-- [x] 数据预览增强（JSON/BLOB/布尔智能展示）
-- [x] SQL 片段管理（分类/变量占位符/快捷运行）
-
-### 规划中
-
-- [ ] 全局搜索
-- [ ] 列宽持久化
-- [ ] 快捷键系统
-- [ ] 主题切换（浅色/深色模式）
-- [ ] 数据同步 / 结构同步
-- [ ] 支持 PostgreSQL / SQLite
-
----
-
-## 许可证
-
-[MIT](LICENSE)
-
----
-
-<div align="center">
-  Made with ❤️ by nexSql
-</div>
+MIT

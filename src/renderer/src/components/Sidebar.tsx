@@ -5,7 +5,6 @@ import {
   Terminal,
   ArrowLeftRight,
   RefreshCw,
-  KeyRound,
 } from 'lucide-react'
 import { useUiStore } from '@stores/ui'
 import { useTabStore } from '@stores/tab'
@@ -54,9 +53,12 @@ export default function Sidebar() {
     }
   }, [handleMouseMove, handleMouseUp])
 
-  // 快捷按钮通用样式
+  // 快捷按钮通用样式（带文字）
   const quickBtn =
-    'flex items-center justify-center w-8 h-8 rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors'
+    'flex items-center gap-1 px-2.5 h-7 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors'
+  // 快捷按钮通用样式（仅图标）
+  const iconBtn =
+    'flex items-center justify-center w-7 h-7 rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors'
 
   return (
     <>
@@ -81,22 +83,7 @@ export default function Sidebar() {
         </div>
 
         {/* 快捷操作工具栏 */}
-        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-border-light bg-bg-tertiary">
-          <button
-            onClick={() => openConnectionModal(undefined, 'mysql')}
-            className={quickBtn}
-            title="新建 MySQL 连接"
-          >
-            <DatabaseIcon size={15} />
-          </button>
-          <button
-            onClick={() => openConnectionModal(undefined, 'redis')}
-            className={quickBtn}
-            title="新建 Redis 连接"
-          >
-            <KeyRound size={15} />
-          </button>
-          <div className="w-px h-5 bg-border-light mx-0.5" />
+        <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border-light bg-bg-tertiary">
           <button
             onClick={() => {
               if (selectedConnectionId) {
@@ -107,7 +94,8 @@ export default function Sidebar() {
             className={`${quickBtn} disabled:opacity-30 disabled:cursor-not-allowed`}
             title="新建查询"
           >
-            <Terminal size={15} />
+            <Terminal size={13} />
+            新建查询
           </button>
           <button
             onClick={() => {
@@ -119,12 +107,12 @@ export default function Sidebar() {
             className={`${quickBtn} disabled:opacity-30 disabled:cursor-not-allowed`}
             title="数据同步"
           >
-            <ArrowLeftRight size={15} />
+            <ArrowLeftRight size={13} />
+            数据同步
           </button>
-          <div className="w-px h-5 bg-border-light mx-0.5" />
           <button
             onClick={() => refreshList()}
-            className={`${quickBtn} ml-auto`}
+            className={`${iconBtn} ml-auto`}
             title="刷新列表"
           >
             <RefreshCw size={14} />

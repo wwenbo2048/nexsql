@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
+import { AlertTriangle, X } from 'lucide-react'
 import { useConnectionStore } from '@stores/connection'
 import { useUiStore } from '@stores/ui'
 import { useBrowserStore } from '@stores/browser'
@@ -22,16 +23,20 @@ export default function App() {
   // 侧栏/右侧面板显隐
   const [showSidebar, setShowSidebar] = useState(true)
   const [showRightPanel, setShowRightPanel] = useState(true)
+  const [showClearCache, setShowClearCache] = useState(false)
 
   // 监听菜单栏的显隐事件
   useEffect(() => {
     const toggleSidebar = () => setShowSidebar((v) => !v)
     const toggleRightPanel = () => setShowRightPanel((v) => !v)
+    const handleClearCache = () => setShowClearCache(true)
     window.addEventListener('nexsql-toggle-sidebar', toggleSidebar)
     window.addEventListener('nexsql-toggle-middle', toggleRightPanel)
+    window.addEventListener('nexsql-clear-cache', handleClearCache)
     return () => {
       window.removeEventListener('nexsql-toggle-sidebar', toggleSidebar)
       window.removeEventListener('nexsql-toggle-middle', toggleRightPanel)
+      window.removeEventListener('nexsql-clear-cache', handleClearCache)
     }
   }, [])
 
@@ -144,6 +149,118 @@ export default function App() {
 
       <ConnectionModal />
       <ContextMenu />
+
+      {/* 清除缓存确认弹窗 */}
+      {showClearCache && (
+        <ClearCacheModal
+          onConfirm={async () => {
+            // 1. 清除主进程缓存（AI 对话等）
+            try {
+              await window.api.cache.clearCache()
+            } catch {}
+            // 2. 清除前端 localStorage 缓存
+            const keysToRemove = [
+              'nexsql-query-history',
+              'nexsql-sql-snippets',
+              'nexsql-open-tabs',
+              'nexsql-default-page-size',
+              'nexsql-saved-queries',
+            ]
+            keysToRemove.forEach((key) => localStorage.removeItem(key))
+            // 3. 刷新页面
+            window.location.reload()
+          }}
+          onClose={() => setShowClearCache(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ==================== 清除缓存确认弹窗 ====================
+
+function ClearCacheModal({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  const [clearing, setClearing] = useState(false)
+
+  const handleConfirm = async () => {
+    setClearing(true)
+    onConfirm()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="w-[420px] bg-bg-secondary border border-border-light rounded-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 头部 */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-light">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} className="text-yellow-400" />
+            <span className="text-sm font-medium text-text-primary">清除应用缓存数据</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-bg-hover rounded text-text-muted hover:text-text-primary transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* 内容 */}
+        <div className="px-4 py-4 space-y-3">
+          <div className="text-xs text-text-secondary leading-relaxed">
+            此操作将清除以下本地缓存数据，<span className="text-red-400 font-medium">不可恢复</span>：
+          </div>
+          <div className="space-y-1.5 text-xs text-text-muted bg-bg-tertiary/50 rounded px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+              AI 对话历史记录
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+              SQL 查询历史记录
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+              SQL 代码片段
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+              界面布局偏好（标签页等）
+            </div>
+          </div>
+          <div className="text-[11px] text-text-muted leading-relaxed">
+            连接配置和 AI API Key 设置不受影响。
+          </div>
+        </div>
+
+        {/* 操作按钮 */}
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-border-light">
+          <button
+            onClick={onClose}
+            className="px-3 py-2 text-xs border border-border-light hover:bg-bg-hover text-text-secondary rounded transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={clearing}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-red-500 hover:bg-red-600 text-white rounded transition-colors disabled:opacity-50"
+          >
+            {clearing ? '清除中...' : '确认清除'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
