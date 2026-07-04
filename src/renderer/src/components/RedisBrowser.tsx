@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Loader2, AlertCircle, Search, Trash2, Edit3, Plus, RefreshCw,
-  ChevronRight, Clock, Hash, List, FileBox, Layers, X, Check, Save, KeyRound, Tag
+  ChevronRight, Clock, Hash, List, FileBox, Layers, X, Check, Save, KeyRound, Tag,
+  Square, CheckSquare, MinusSquare
 } from 'lucide-react'
 import type { ConnectionConfig, RedisKeyInfo, RedisKeyValue, RedisKeyType } from '@shared/types'
 
@@ -66,6 +67,9 @@ export default function RedisBrowser({ config, onClose }: Props) {
   const [editTtl, setEditTtl] = useState('')
   const [saving, setSaving] = useState(false)
   const [newKeyModal, setNewKeyModal] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const [selectMode, setSelectMode] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   // 初始加载
   const loadKeys = useCallback(async (pattern: string) => {
@@ -73,6 +77,7 @@ export default function RedisBrowser({ config, onClose }: Props) {
     setError(null)
     setSelectedKey(null)
     setKeyDetail(null)
+    setSelectedKeys(new Set())
     try {
       // 先获取 dbsize
       const sizeRes = await window.api.redis.dbsize(config)
@@ -162,6 +167,49 @@ export default function RedisBrowser({ config, onClose }: Props) {
     }
   }, [config, selectedKey])
 
+  // 切换单个 key 的选中状态
+  const toggleSelectKey = useCallback((key: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  // 全选/取消全选
+  const toggleSelectAll = useCallback(() => {
+    setSelectedKeys((prev) => {
+      if (prev.size === keys.length) return new Set()
+      return new Set(keys.map((k) => k.key))
+    })
+  }, [keys])
+
+  // 批量删除
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedKeys.size === 0) return
+    if (!confirm(`确定删除选中的 ${selectedKeys.size} 个 key 吗？此操作不可撤销。`)) return
+    setBatchDeleting(true)
+    try {
+      const res = await window.api.redis.batchDeleteKeys(config, Array.from(selectedKeys))
+      if (!res.success) throw new Error(res.error)
+      const deletedCount = res.data ?? 0
+      setKeys((prev) => prev.filter((k) => !selectedKeys.has(k.key)))
+      if (selectedKey && selectedKeys.has(selectedKey)) {
+        setSelectedKey(null)
+        setKeyDetail(null)
+      }
+      setSelectedKeys(new Set())
+      // 更新 dbsize
+      setDbSize((prev) => Math.max(0, prev - deletedCount))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBatchDeleting(false)
+    }
+  }, [config, selectedKeys, selectedKey])
+
   // 设置 TTL
   const handleSetTtl = useCallback(async () => {
     if (!selectedKey) return
@@ -186,9 +234,48 @@ export default function RedisBrowser({ config, onClose }: Props) {
         <span className="text-[10px] text-text-muted">DB{config.redisDb ?? 0}</span>
         <span className="text-[10px] text-text-muted">· {dbSize} keys</span>
 
+        {/* 批量选择模式工具栏 */}
+        {selectMode ? (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-secondary hover:bg-bg-hover transition-colors"
+              title="全选/取消全选"
+            >
+              {selectedKeys.size === keys.length && keys.length > 0 ? <MinusSquare size={12} /> : <CheckSquare size={12} />}
+              {selectedKeys.size === keys.length && keys.length > 0 ? '取消全选' : '全选'}
+            </button>
+            <span className="text-[10px] text-text-muted">已选 {selectedKeys.size} 项</span>
+            <button
+              onClick={handleBatchDelete}
+              disabled={selectedKeys.size === 0 || batchDeleting}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-30"
+            >
+              {batchDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              批量删除
+            </button>
+            <button
+              onClick={() => { setSelectMode(false); setSelectedKeys(new Set()) }}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted hover:bg-bg-hover transition-colors"
+              title="退出选择模式"
+            >
+              <X size={11} /> 取消
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setSelectMode(true)}
+            disabled={keys.length === 0}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-secondary hover:bg-bg-hover transition-colors disabled:opacity-30"
+            title="批量选择"
+          >
+            <Square size={11} /> 批量选择
+          </button>
+        )}
+
         <button
           onClick={() => setNewKeyModal(true)}
-          className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+          className="flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
         >
           <Plus size={11} /> 新建
         </button>
@@ -247,9 +334,19 @@ export default function RedisBrowser({ config, onClose }: Props) {
                   return (
                     <div
                       key={k.key}
-                      onClick={() => viewKey(k.key)}
-                      className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 hover:bg-bg-hover ${isActive ? 'bg-accent/10' : ''}`}
+                      onClick={() => selectMode ? toggleSelectKey(k.key, { stopPropagation: () => {} } as any) : viewKey(k.key)}
+                      className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-border-light/30 hover:bg-bg-hover ${isActive ? 'bg-accent/10' : ''} ${selectMode && selectedKeys.has(k.key) ? 'bg-red-500/10' : ''}`}
                     >
+                      {selectMode && (
+                        <button
+                          onClick={(e) => toggleSelectKey(k.key, e)}
+                          className="flex-shrink-0 p-0.5"
+                        >
+                          {selectedKeys.has(k.key)
+                            ? <CheckSquare size={13} className="text-red-400" />
+                            : <Square size={13} className="text-text-muted" />}
+                        </button>
+                      )}
                       <Icon size={12} className={`${TYPE_COLORS[k.type]} flex-shrink-0`} />
                       <span className={`text-xs font-mono truncate flex-1 ${isActive ? 'text-accent' : 'text-text-primary'}`}>
                         {k.key}

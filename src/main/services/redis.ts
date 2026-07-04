@@ -229,6 +229,14 @@ export async function deleteKey(config: ConnectionConfig, key: string): Promise<
   await client.del(key)
 }
 
+// 批量删除 keys
+export async function batchDeleteKeys(config: ConnectionConfig, keys: string[]): Promise<number> {
+  const client = await getClient(config)
+  if (keys.length === 0) return 0
+  const deleted = await client.del(...keys)
+  return deleted
+}
+
 // 设置 TTL
 export async function setTtl(config: ConnectionConfig, key: string, ttl: number): Promise<void> {
   const client = await getClient(config)

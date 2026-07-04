@@ -176,6 +176,8 @@ const api = {
       ipcRenderer.invoke('redis:setKey', config, key, type, value, ttl),
     deleteKey: (config: ConnectionConfig, key: string): Promise<IpcResponse> =>
       ipcRenderer.invoke('redis:deleteKey', config, key),
+    batchDeleteKeys: (config: ConnectionConfig, keys: string[]): Promise<IpcResponse<number>> =>
+      ipcRenderer.invoke('redis:batchDeleteKeys', config, keys),
     setTtl: (config: ConnectionConfig, key: string, ttl: number): Promise<IpcResponse> =>
       ipcRenderer.invoke('redis:setTtl', config, key, ttl),
     rename: (config: ConnectionConfig, oldKey: string, newKey: string): Promise<IpcResponse> =>

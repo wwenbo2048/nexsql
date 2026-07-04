@@ -862,6 +862,18 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     }
   )
 
+  ipcMain.handle('redis:batchDeleteKeys',
+    async (_event, config: ConnectionConfig, keys: string[]) => {
+      try {
+        const deleted = await redis.batchDeleteKeys(config, keys)
+        return { success: true, data: deleted }
+      } catch (err) {
+        logError('redis:batchDeleteKeys', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
   ipcMain.handle('redis:setTtl',
     async (_event, config: ConnectionConfig, key: string, ttl: number) => {
       try {
