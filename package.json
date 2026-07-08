@@ -9,11 +9,11 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:win": "electron-vite build && electron-builder --win",
-    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:mac": "npm run mcp:build && electron-vite build && electron-builder --mac",
+    "build:win": "npm run mcp:build && electron-vite build && electron-builder --win",
+    "build:linux": "npm run mcp:build && electron-vite build && electron-builder --linux",
     "mcp:dev": "npx tsx src/mcp/index.ts",
-    "mcp:build": "tsc -p tsconfig.mcp.json"
+    "mcp:build": "esbuild src/mcp/index.ts --bundle --platform=node --format=cjs --outfile=out/mcp/index.js --external:mysql2 --external:ioredis --external:ssh2 --external:cpu-features && node scripts/copy-mcp-launcher.js"
   },
   "dependencies": {
     "@glideapps/glide-data-grid": "^6.0.3",
@@ -45,6 +45,7 @@
     "electron": "^29.1.5",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.0.0",
+    "esbuild": "^0.28.1",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",

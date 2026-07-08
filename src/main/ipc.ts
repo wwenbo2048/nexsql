@@ -1146,7 +1146,10 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
         ? join(process.resourcesPath, 'mcp')
         : join(__dirname, '..', '..', 'mcp')  // dev: src/mcp -> project root -> out/mcp
       const devBuildPath = join(app.getAppPath(), 'out', 'mcp', 'index.js')
-      const serverPath = app.isPackaged ? join(resourcesPath, 'index.js') : devBuildPath
+      // 生产环境使用 launcher.cjs（设置 NODE_PATH），开发环境直接用 index.js
+      const serverPath = app.isPackaged
+        ? join(resourcesPath, 'launcher.cjs')
+        : devBuildPath
 
       // 检查是否已构建
       let built = false
@@ -1154,7 +1157,13 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
         statSync(serverPath)
         built = true
       } catch {
-        built = false
+        // 开发环境回退检查 index.js
+        try {
+          statSync(devBuildPath)
+          built = true
+        } catch {
+          built = false
+        }
       }
 
       const configPath = join(homedir(), '.nexsql', 'mcp-connections.json')

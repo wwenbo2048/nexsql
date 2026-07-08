@@ -72,7 +72,7 @@ export default function McpSettingsModal() {
   if (!show) return null
 
   // 生成 MCP 客户端配置 JSON
-  const serverPath = mcpInfo?.serverPath ?? '/path/to/nexSql/out/mcp/index.js'
+  const serverPath = mcpInfo?.serverPath ?? '/path/to/nexSql/out/mcp/launcher.cjs'
   const configPath = mcpInfo?.configPath ?? '~/.nexsql/mcp-connections.json'
 
   const claudeDesktopConfig = JSON.stringify(
@@ -101,12 +101,12 @@ export default function McpSettingsModal() {
     2
   )
 
-  const npxConfig = JSON.stringify(
+  const qoderConfig = JSON.stringify(
     {
       mcpServers: {
         nexsql: {
-          command: 'npx',
-          args: ['tsx', `${serverPath}`],
+          command: 'node',
+          args: [serverPath],
         },
       },
     },
@@ -235,8 +235,8 @@ export default function McpSettingsModal() {
                     <code className="text-accent">node_modules/</code> 复制到目标电脑，然后运行：
                   </p>
                   <CopyableCodeBlock
-                    code={`# 1. 复制配置文件到目标电脑\nscp ~/.nexsql/mcp-connections.json target-host:~/.nexsql/\n\n# 2. 在目标电脑启动 MCP 服务器\nnode /path/to/out/mcp/index.js`}
-                    onCopy={() => copyToClipboard('scp ~/.nexsql/mcp-connections.json target-host:~/.nexsql/\n\n# 在目标电脑启动\nnode /path/to/out/mcp/index.js', 'method-a')}
+                    code={`# 1. 复制配置文件到目标电脑\nscp ~/.nexsql/mcp-connections.json target-host:~/.nexsql/\n\n# 2. 在目标电脑启动 MCP 服务器\nnode /path/to/out/mcp/launcher.cjs`}
+                    onCopy={() => copyToClipboard('scp ~/.nexsql/mcp-connections.json target-host:~/.nexsql/\n\n# 在目标电脑启动\nnode /path/to/out/mcp/launcher.cjs', 'method-a')}
                     copied={copiedKey === 'method-a'}
                   />
                 </div>
@@ -303,7 +303,7 @@ export default function McpSettingsModal() {
                 {
                   name: 'Qoder',
                   configPath: '在 Qoder 设置 → MCP 中添加',
-                  config: npxConfig,
+                  config: qoderConfig,
                   copyKey: 'qoder',
                 },
               ]}

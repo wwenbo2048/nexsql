@@ -12,6 +12,11 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: out/mcp
+    to: mcp
+  - from: node_modules
+    to: node_modules
 mac:
   target:
     - dmg
