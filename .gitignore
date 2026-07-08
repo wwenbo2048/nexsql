@@ -25,5 +25,8 @@ npm-debug.log*
 .env
 .env.local
 
+# MCP config (contains plaintext credentials)
+mcp-connections.json
+
 # Electron
 electron-builder.lock

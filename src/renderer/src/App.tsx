@@ -9,6 +9,7 @@ import TableDetailPanel from '@components/TableDetailPanel'
 import ConnectionModal from '@components/ConnectionModal'
 import ContextMenu from '@components/ContextMenu'
 import MenuBar from '@components/MenuBar'
+import McpSettingsModal from '@components/McpSettingsModal'
 
 export default function App() {
   const loadConnections = useConnectionStore((s) => s.loadConnections)
@@ -148,6 +149,7 @@ export default function App() {
       </div>
 
       <ConnectionModal />
+      <McpSettingsModal />
       <ContextMenu />
 
       {/* 清除缓存确认弹窗 */}

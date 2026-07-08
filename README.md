@@ -111,6 +111,19 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 - 支持 String / Hash / List / Set / ZSet / Stream 类型
 - TTL 管理
 - 实时数据查看与编辑
+- 多选批量删除
+
+### MCP 服务（AI 工具集成）
+> 让外部 AI 客户端（Claude Desktop、Cursor、Qoder 等）通过 MCP 协议连接和管理你的数据库。
+
+- **独立进程**：MCP 服务是独立 Node.js 进程，不需要启动 nexSql 应用即可运行
+- **自动同步**：新建/修改/删除连接时自动同步到 MCP 配置文件（`~/.nexsql/mcp-connections.json`）
+- **代理架构**：MCP 服务器持有连接密码并代理执行，AI 客户端仅传递 connectionId，密码不经过 MCP 协议暴露
+- **19 个工具函数**：
+  - MySQL（10 个）：`mysql_query`、`mysql_list_databases`、`mysql_list_tables`、`mysql_describe_table`、`mysql_show_create_table`、`mysql_get_table_data`、`mysql_get_views`、`mysql_get_routines`、`mysql_server_status`
+  - Redis（9 个）：`redis_info`、`redis_dbsize`、`redis_scan`、`redis_get`、`redis_set`、`redis_delete`、`redis_expire`、`redis_type`、`redis_ttl`
+- **应用内配置页面**：提供可视化教程弹窗，引导在其他电脑上安装部署
+- **安全设计**：`listConnectionsSafe` 接口剥离密码等敏感字段，仅返回 connectionId、名称、类型
 
 ### 性能监控
 - 服务器状态变量（连接数、缓冲池、线程等）
@@ -141,6 +154,7 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 | Redis 驱动 | ioredis | 5.x |
 | SSH 隧道 | ssh2 | 1.x |
 | AI 模型 | DeepSeek (OpenAI 兼容) | - |
+| MCP 协议 | @modelcontextprotocol/sdk | - |
 | 样式 | Tailwind CSS | 3.x |
 | 语言 | TypeScript | 5.x |
 
@@ -217,6 +231,13 @@ nexSql/
 │   │   │   └── ssh-tunnel.ts # SSH 隧道
 │   │   └── utils/
 │   │       └── http.ts       # HTTP 工具
+│   ├── mcp/                  # MCP 服务（独立进程）
+│   │   ├── index.ts          # MCP 服务入口（stdio transport）
+│   │   ├── config.ts         # 配置加载器
+│   │   ├── connection-manager.ts # MySQL/Redis 连接管理
+│   │   ├── mysql-tools.ts    # MySQL 工具函数
+│   │   ├── redis-tools.ts    # Redis 工具函数
+│   │   └── types.ts          # MCP 类型定义
 │   ├── preload/              # 预加载脚本（IPC 桥接）
 │   │   ├── index.ts
 │   │   └── index.d.ts        # 类型声明
@@ -271,6 +292,7 @@ nexSql/
 - [ ] 表数据对比与合并
 
 ### 协作与云端
+- [x] MCP 服务（AI 工具集成）✅ 已实现
 - [ ] 连接配置云同步
 - [ ] 团队共享 SQL 片段
 - [ ] 查询历史云备份

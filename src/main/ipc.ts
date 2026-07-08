@@ -1,7 +1,9 @@
-import { ipcMain, type BrowserWindow, dialog } from 'electron'
-import { writeFile, readFile } from 'fs/promises'
+import { ipcMain, type BrowserWindow, dialog, app } from 'electron'
+import { writeFile, readFile, mkdir } from 'fs/promises'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
+import { join } from 'path'
+import { homedir } from 'os'
 import Store from 'electron-store'
 import { uuidv4 } from './uuid'
 import { encryptPassword, decryptPassword } from './crypto'
@@ -189,6 +191,45 @@ class StreamingSqlSplitter {
 export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
   // ==================== 连接配置存储 ====================
 
+  /** 将当前所有连接同步导出到 MCP 配置文件（静默，失败不阻塞） */
+  async function syncMcpConnections(): Promise<void> {
+    try {
+      const connections = store.get('connections', []).map((c) => ({
+        ...c,
+        password: decryptPassword(c.password) ?? '',
+        sshPassword: decryptPassword(c.sshPassword) ?? ''
+      }))
+
+      const mcpConnections = connections.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        host: c.host,
+        port: c.port,
+        user: c.user,
+        password: c.password,
+        database: c.database,
+        sslEnabled: c.sslEnabled,
+        connectTimeout: c.connectTimeout,
+        redisDb: c.redisDb,
+        sshEnabled: c.sshEnabled,
+        sshHost: c.sshHost,
+        sshPort: c.sshPort,
+        sshUser: c.sshUser,
+        sshPassword: c.sshPassword,
+        sshPrivateKey: c.sshPrivateKey
+      }))
+
+      const mcpDir = join(homedir(), '.nexsql')
+      const mcpPath = join(mcpDir, 'mcp-connections.json')
+      await mkdir(mcpDir, { recursive: true })
+      await writeFile(mcpPath, JSON.stringify({ connections: mcpConnections }, null, 2), 'utf-8')
+    } catch (err) {
+      // 静默失败：MCP 配置同步不应阻塞连接保存操作
+      console.error('[MCP] 自动同步连接配置失败:', err)
+    }
+  }
+
   ipcMain.handle('config:getConnections', () => {
     const connections = store.get('connections', [])
     // 返回时解密密码
@@ -215,6 +256,8 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       connections.push(encrypted)
     }
     store.set('connections', connections)
+    // 自动同步到 MCP 配置文件
+    syncMcpConnections()
     // 返回解密版本给前端
     return {
       ...encrypted,
@@ -228,6 +271,8 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     const filtered = connections.filter((c) => c.id !== id)
     store.set('connections', filtered)
     db.disconnect(id)
+    // 自动同步到 MCP 配置文件
+    syncMcpConnections()
     return true
   })
 
@@ -1078,6 +1123,47 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       }
     }
   )
+
+  // ==================== MCP 配置导出 ====================
+
+  ipcMain.handle('config:exportMcp', async (): Promise<IpcResponse<{ path: string; count: number }>> => {
+    try {
+      const count = store.get('connections', []).length
+      const mcpDir = join(homedir(), '.nexsql')
+      const mcpPath = join(mcpDir, 'mcp-connections.json')
+      await syncMcpConnections()
+      return { success: true, data: { path: mcpPath, count } }
+    } catch (err) {
+      logError('config:exportMcp', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  // 获取 MCP 服务器路径和状态
+  ipcMain.handle('config:getMcpInfo', (): IpcResponse<{ serverPath: string; configPath: string; built: boolean }> => {
+    try {
+      const resourcesPath = app.isPackaged
+        ? join(process.resourcesPath, 'mcp')
+        : join(__dirname, '..', '..', 'mcp')  // dev: src/mcp -> project root -> out/mcp
+      const devBuildPath = join(app.getAppPath(), 'out', 'mcp', 'index.js')
+      const serverPath = app.isPackaged ? join(resourcesPath, 'index.js') : devBuildPath
+
+      // 检查是否已构建
+      let built = false
+      try {
+        statSync(serverPath)
+        built = true
+      } catch {
+        built = false
+      }
+
+      const configPath = join(homedir(), '.nexsql', 'mcp-connections.json')
+      return { success: true, data: { serverPath, configPath, built } }
+    } catch (err) {
+      logError('config:getMcpInfo', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
 }
 
 export function getStoredConnections(): ConnectionConfig[] {

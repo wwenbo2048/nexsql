@@ -21,7 +21,8 @@ import {
   Github,
   Info,
   Settings,
-  Eraser
+  Eraser,
+  Share2
 } from 'lucide-react'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
@@ -50,6 +51,7 @@ export default function MenuBar() {
   const appVersion = useMemo(() => window.api?.appVersion ?? '', [])
 
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
+  const openMcpSettings = useUiStore((s) => s.openMcpSettings)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
   const defaultPageSize = useUiStore((s) => s.defaultPageSize)
   const setDefaultPageSize = useUiStore((s) => s.setDefaultPageSize)
@@ -258,6 +260,15 @@ export default function MenuBar() {
             onClick: () => setDefaultPageSize(opt)
           }))
         })
+        setOpenMenu(null)
+      }
+    },
+    { label: '', separator: true },
+    {
+      label: '导出连接到 MCP...',
+      icon: <Share2 size={13} />,
+      onClick: () => {
+        openMcpSettings()
         setOpenMenu(null)
       }
     },
