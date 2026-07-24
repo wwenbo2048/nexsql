@@ -2,6 +2,21 @@
 
 const TOKEN_KEY = 'nexsql-mobile-token'
 
+/**
+ * 获取 API base path。
+ * 本地直接访问时为空（/），通过隧道访问时为 /tunnel/{id}/{name}
+ */
+function getBasePath(): string {
+  const path = window.location.pathname
+  // 匹配 /tunnel/{tunnelId}/{tunnelName}/
+  const match = path.match(/^(\/tunnel\/[^/]+\/[^/]+)(?:\/|$)/)
+  if (match) return match[1]
+  return ''
+}
+
+/** API 完整前缀 */
+const API_PREFIX = getBasePath() + '/api'
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
@@ -36,7 +51,7 @@ async function request<T = unknown>(path: string, options: RequestInit = {}): Pr
   }
 
   try {
-    const res = await fetch(`/api${path}`, {
+    const res = await fetch(`${API_PREFIX}${path}`, {
       ...options,
       headers
     })
@@ -208,7 +223,7 @@ export async function generateSqlSSE(
   onChunk: (chunk: string) => void
 ): Promise<string> {
   const token = getToken()
-  const res = await fetch('/api/ai/generate', {
+  const res = await fetch(`${API_PREFIX}/ai/generate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

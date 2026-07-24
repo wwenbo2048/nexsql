@@ -123,6 +123,15 @@ export async function startServer(port: number = 19800): Promise<ServerStatus> {
   })
 }
 
+// 重新导出隧道控制函数
+export {
+  startTunnel,
+  stopTunnel,
+  getTunnelStatus,
+  getTunnelConfig,
+  saveTunnelConfig
+} from './tunnel'
+
 export async function stopServer(): Promise<void> {
   if (!server) return
   await new Promise<void>((resolve) => {

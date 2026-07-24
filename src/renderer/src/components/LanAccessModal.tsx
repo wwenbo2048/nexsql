@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Loader2,
   Shield,
+  Globe,
+  Settings,
 } from 'lucide-react'
 import { useUiStore } from '@stores/ui'
 
@@ -20,6 +22,20 @@ interface ServerStatusData {
   urls: string[]
   pairCode: string | null
   authorizedDevices: number
+}
+
+interface TunnelStatusData {
+  connected: boolean
+  tunnelId: string | null
+  publicUrl: string | null
+  error: string | null
+}
+
+interface TunnelConfigData {
+  gatewayUrl: string
+  tunnelId: string
+  secret: string
+  tunnelName: string
 }
 
 export default function LanAccessModal() {
@@ -32,10 +48,24 @@ export default function LanAccessModal() {
   const [error, setError] = useState<string | null>(null)
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
 
+  // 隧道状态
+  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusData | null>(null)
+  const [tunnelConfig, setTunnelConfig] = useState<TunnelConfigData | null>(null)
+  const [tunnelLoading, setTunnelLoading] = useState(false)
+  const [showTunnelSettings, setShowTunnelSettings] = useState(false)
+
   // 加载服务器状态
   useEffect(() => {
     if (!show) return
     refreshStatus()
+    refreshTunnel()
+  }, [show])
+
+  // 隧道状态轮询
+  useEffect(() => {
+    if (!show) return
+    const timer = setInterval(refreshTunnel, 3000)
+    return () => clearInterval(timer)
   }, [show])
 
   const refreshStatus = useCallback(async () => {
@@ -85,6 +115,55 @@ export default function LanAccessModal() {
     }
   }, [])
 
+  // ==================== 隧道网关 ====================
+
+  const refreshTunnel = useCallback(async () => {
+    const [statusRes, configRes] = await Promise.all([
+      window.api.tunnel.status(),
+      window.api.tunnel.getConfig()
+    ])
+    if (statusRes.success && statusRes.data) {
+      setTunnelStatus(statusRes.data as TunnelStatusData)
+    }
+    if (configRes.success && configRes.data) {
+      setTunnelConfig(configRes.data as TunnelConfigData)
+    }
+  }, [])
+
+  const handleTunnelStart = useCallback(async () => {
+    setTunnelLoading(true)
+    try {
+      const res = await window.api.tunnel.start(port)
+      if (res.success && res.data) {
+        setTunnelStatus(res.data as TunnelStatusData)
+      }
+    } finally {
+      setTunnelLoading(false)
+    }
+  }, [port])
+
+  const handleTunnelStop = useCallback(async () => {
+    setTunnelLoading(true)
+    try {
+      await window.api.tunnel.stop()
+      await refreshTunnel()
+    } finally {
+      setTunnelLoading(false)
+    }
+  }, [refreshTunnel])
+
+  const handleSaveTunnelConfig = useCallback(async () => {
+    if (!tunnelConfig) return
+    setTunnelLoading(true)
+    try {
+      await window.api.tunnel.saveConfig(tunnelConfig)
+      setShowTunnelSettings(false)
+      await refreshTunnel()
+    } finally {
+      setTunnelLoading(false)
+    }
+  }, [tunnelConfig, refreshTunnel])
+
   const copyToClipboard = useCallback((text: string, key: string) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedUrl(key)
@@ -102,7 +181,7 @@ export default function LanAccessModal() {
       onClick={close}
     >
       <div
-        className="w-[520px] max-h-[85vh] bg-bg-secondary border border-border-light rounded-lg shadow-2xl flex flex-col"
+        className="w-[560px] max-h-[85vh] bg-bg-secondary border border-border-light rounded-lg shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -252,6 +331,142 @@ export default function LanAccessModal() {
               </div>
             </>
           )}
+
+          {/* 隧道网关（公网访问） */}
+          <div className="border-t border-border-light pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Globe size={14} className="text-accent" />
+                <span className="text-xs font-semibold text-text-primary">公网隧道</span>
+                {tunnelStatus?.connected && (
+                  <span className="flex items-center gap-1 text-[11px] text-green-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                    已连接
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowTunnelSettings(!showTunnelSettings)}
+                className="flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors"
+              >
+                <Settings size={11} />
+                配置
+              </button>
+            </div>
+
+            {/* 隧道配置编辑 */}
+            {showTunnelSettings && tunnelConfig && (
+              <div className="mb-3 p-3 bg-bg-tertiary/50 rounded-lg border border-border-light space-y-2">
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase">网关地址</label>
+                  <input
+                    type="text"
+                    value={tunnelConfig.gatewayUrl}
+                    onChange={(e) => setTunnelConfig({ ...tunnelConfig, gatewayUrl: e.target.value })}
+                    placeholder="wss://tunnel.example.com/ws/tunnel/control"
+                    className="w-full mt-0.5 px-2 py-1.5 bg-bg-primary border border-border-light rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-text-muted uppercase">节点 ID</label>
+                    <input
+                      type="text"
+                      value={tunnelConfig.tunnelId}
+                      onChange={(e) => setTunnelConfig({ ...tunnelConfig, tunnelId: e.target.value })}
+                      placeholder="nexsql-001"
+                      className="w-full mt-0.5 px-2 py-1.5 bg-bg-primary border border-border-light rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] text-text-muted uppercase">隧道名</label>
+                    <input
+                      type="text"
+                      value={tunnelConfig.tunnelName}
+                      onChange={(e) => setTunnelConfig({ ...tunnelConfig, tunnelName: e.target.value })}
+                      placeholder="mobile"
+                      className="w-full mt-0.5 px-2 py-1.5 bg-bg-primary border border-border-light rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted uppercase">密钥</label>
+                  <input
+                    type="password"
+                    value={tunnelConfig.secret}
+                    onChange={(e) => setTunnelConfig({ ...tunnelConfig, secret: e.target.value })}
+                    placeholder="••••••••••••"
+                    className="w-full mt-0.5 px-2 py-1.5 bg-bg-primary border border-border-light rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveTunnelConfig}
+                  disabled={tunnelLoading}
+                  className="w-full mt-1 py-1.5 bg-accent/15 hover:bg-accent/25 text-accent text-xs rounded transition-colors disabled:opacity-50"
+                >
+                  保存配置
+                </button>
+              </div>
+            )}
+
+            {/* 隧道状态显示 */}
+            {!showTunnelSettings && (
+              <>
+                <p className="text-[11px] text-text-muted mb-2 leading-relaxed">
+                  通过隧道网关暴露到公网，不在同一局域网也能访问。需先启动局域网服务器。
+                </p>
+
+                {tunnelStatus?.connected && tunnelStatus.publicUrl && (
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 px-3 py-2 bg-bg-primary border border-border-light rounded text-xs text-accent truncate">
+                        {tunnelStatus.publicUrl}
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard(tunnelStatus.publicUrl!, 'tunnel')}
+                        className="p-2 hover:bg-bg-hover rounded text-text-muted hover:text-accent transition-colors"
+                      >
+                        {copiedUrl === 'tunnel' ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {tunnelStatus?.error && (
+                  <div className="mb-2 flex items-center gap-1.5 text-xs text-red-400">
+                    <AlertCircle size={12} />
+                    {tunnelStatus.error}
+                  </div>
+                )}
+
+                {/* 启动/停止按钮 */}
+                <div className="flex items-center gap-2">
+                  {tunnelStatus?.connected ? (
+                    <button
+                      onClick={handleTunnelStop}
+                      disabled={tunnelLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-xs rounded transition-colors disabled:opacity-50"
+                    >
+                      {tunnelLoading ? <Loader2 size={12} className="animate-spin" /> : <Square size={12} />}
+                      断开隧道
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleTunnelStart}
+                      disabled={tunnelLoading || !isRunning}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/15 hover:bg-accent/25 text-accent text-xs rounded transition-colors disabled:opacity-50"
+                    >
+                      {tunnelLoading ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                      连接隧道
+                    </button>
+                  )}
+                  {!isRunning && (
+                    <span className="text-[10px] text-text-muted">需先启动局域网服务器</span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* 安全提示 */}
           <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-900/15 border border-blue-700/30 rounded-lg">
