@@ -20,6 +20,7 @@ interface UiState {
   editingConnectionId: string | null
   connectionPresetType: 'mysql' | 'redis' | null
   showMcpSettings: boolean
+  showLanAccess: boolean
   contextMenu: { x: number; y: number; items: ContextMenuItem[] } | null
   // Actions
   setSidebarWidth: (width: number) => void
@@ -30,6 +31,8 @@ interface UiState {
   closeConnectionModal: () => void
   openMcpSettings: () => void
   closeMcpSettings: () => void
+  openLanAccess: () => void
+  closeLanAccess: () => void
   setContextMenu: (menu: { x: number; y: number; items: ContextMenuItem[] } | null) => void
 }
 
@@ -51,6 +54,7 @@ export const useUiStore = create<UiState>((set) => ({
   editingConnectionId: null,
   connectionPresetType: null,
   showMcpSettings: false,
+  showLanAccess: false,
   contextMenu: null,
 
   setSidebarWidth: (width) => set({ sidebarWidth: Math.max(180, Math.min(500, width)) }),
@@ -63,5 +67,7 @@ export const useUiStore = create<UiState>((set) => ({
     set({ showConnectionModal: false, editingConnectionId: null, connectionPresetType: null }),
   openMcpSettings: () => set({ showMcpSettings: true }),
   closeMcpSettings: () => set({ showMcpSettings: false }),
+  openLanAccess: () => set({ showLanAccess: true }),
+  closeLanAccess: () => set({ showLanAccess: false }),
   setContextMenu: (menu) => set({ contextMenu: menu })
 }))

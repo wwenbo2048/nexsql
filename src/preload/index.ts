@@ -162,6 +162,18 @@ const api = {
       ipcRenderer.invoke('app:clearCache')
   },
 
+  // 局域网访问服务器
+  server: {
+    start: (port?: number): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:start', port),
+    stop: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:stop'),
+    status: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:status'),
+    refreshPairCode: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:refreshPairCode')
+  },
+
   // Redis 操作
   redis: {
     testConnection: (config: ConnectionConfig): Promise<IpcResponse> =>

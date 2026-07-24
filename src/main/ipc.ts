@@ -11,6 +11,7 @@ import type { ConnectionConfig, IpcResponse } from '../shared/types'
 import * as db from './services/db'
 import * as redis from './services/redis'
 import { generateSqlStream, validateApiKey } from './services/ai'
+import { startServer, stopServer, getServerStatus, refreshPairCode } from './server'
 
 interface AISettings {
   apiKey: string
@@ -1123,6 +1124,37 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       }
     }
   )
+
+  // ==================== 局域网访问服务器 ====================
+
+  ipcMain.handle('server:start', async (_event, port?: number): Promise<IpcResponse> => {
+    try {
+      const status = await startServer(port || 19800)
+      return { success: true, data: status }
+    } catch (err) {
+      logError('server:start', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  ipcMain.handle('server:stop', async (): Promise<IpcResponse> => {
+    try {
+      await stopServer()
+      return { success: true }
+    } catch (err) {
+      logError('server:stop', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  ipcMain.handle('server:status', (): IpcResponse => {
+    return { success: true, data: getServerStatus() }
+  })
+
+  ipcMain.handle('server:refreshPairCode', (): IpcResponse => {
+    const code = refreshPairCode()
+    return { success: true, data: { code, ...getServerStatus() } }
+  })
 
   // ==================== MCP 配置导出 ====================
 

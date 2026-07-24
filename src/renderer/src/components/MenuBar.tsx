@@ -22,7 +22,8 @@ import {
   Info,
   Settings,
   Eraser,
-  Share2
+  Share2,
+  Smartphone
 } from 'lucide-react'
 import { useUiStore, type ContextMenuItem } from '@stores/ui'
 import { useConnectionStore } from '@stores/connection'
@@ -52,6 +53,7 @@ export default function MenuBar() {
 
   const openConnectionModal = useUiStore((s) => s.openConnectionModal)
   const openMcpSettings = useUiStore((s) => s.openMcpSettings)
+  const openLanAccess = useUiStore((s) => s.openLanAccess)
   const setContextMenu = useUiStore((s) => s.setContextMenu)
   const defaultPageSize = useUiStore((s) => s.defaultPageSize)
   const setDefaultPageSize = useUiStore((s) => s.setDefaultPageSize)
@@ -262,6 +264,12 @@ export default function MenuBar() {
         })
         setOpenMenu(null)
       }
+    },
+    { label: '', separator: true },
+    {
+      label: '局域网访问...',
+      icon: <Smartphone size={13} />,
+      onClick: () => { openLanAccess(); setOpenMenu(null) }
     },
     { label: '', separator: true },
     {

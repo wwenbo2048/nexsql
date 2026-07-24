@@ -15,6 +15,8 @@ asarUnpack:
 extraResources:
   - from: out/mcp
     to: mcp
+  - from: out/mobile
+    to: mobile
   - from: node_modules
     to: node_modules
 mac:

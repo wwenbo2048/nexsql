@@ -10,6 +10,7 @@ import ConnectionModal from '@components/ConnectionModal'
 import ContextMenu from '@components/ContextMenu'
 import MenuBar from '@components/MenuBar'
 import McpSettingsModal from '@components/McpSettingsModal'
+import LanAccessModal from '@components/LanAccessModal'
 
 export default function App() {
   const loadConnections = useConnectionStore((s) => s.loadConnections)
@@ -150,6 +151,7 @@ export default function App() {
 
       <ConnectionModal />
       <McpSettingsModal />
+      <LanAccessModal />
       <ContextMenu />
 
       {/* 清除缓存确认弹窗 */}
