@@ -11,6 +11,7 @@ import type { ConnectionConfig, IpcResponse } from '../shared/types'
 import * as db from './services/db'
 import * as redis from './services/redis'
 import { generateSqlStream, validateApiKey } from './services/ai'
+import { startServer, stopServer, getServerStatus, refreshPairCode, startTunnel, stopTunnel, getTunnelStatus, getTunnelConfig, saveTunnelConfig } from './server'
 
 interface AISettings {
   apiKey: string
@@ -1307,6 +1308,72 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
       }
     }
   )
+
+  // ==================== 局域网访问服务器 ====================
+
+  ipcMain.handle('server:start', async (_event, port?: number): Promise<IpcResponse> => {
+    try {
+      const status = await startServer(port || 19800)
+      return { success: true, data: status }
+    } catch (err) {
+      logError('server:start', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  ipcMain.handle('server:stop', async (): Promise<IpcResponse> => {
+    try {
+      await stopServer()
+      return { success: true }
+    } catch (err) {
+      logError('server:stop', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  ipcMain.handle('server:status', (): IpcResponse => {
+    return { success: true, data: getServerStatus() }
+  })
+
+  ipcMain.handle('server:refreshPairCode', (): IpcResponse => {
+    const code = refreshPairCode()
+    return { success: true, data: { code, ...getServerStatus() } }
+  })
+
+  // ==================== 隧道网关 ====================
+
+  // 获取隧道配置
+  ipcMain.handle('tunnel:getConfig', (): IpcResponse => {
+    return { success: true, data: getTunnelConfig() }
+  })
+
+  // 保存隧道配置
+  ipcMain.handle('tunnel:saveConfig', (_event, config: { gatewayUrl?: string; tunnelId?: string; secret?: string; tunnelName?: string }): IpcResponse => {
+    const updated = saveTunnelConfig(config)
+    return { success: true, data: updated }
+  })
+
+  // 启动隧道
+  ipcMain.handle('tunnel:start', (_event, port: number): IpcResponse => {
+    try {
+      const status = startTunnel(port)
+      return { success: true, data: status }
+    } catch (err) {
+      logError('tunnel:start', err)
+      return { success: false, error: getFullErrorMessage(err) }
+    }
+  })
+
+  // 停止隧道
+  ipcMain.handle('tunnel:stop', (): IpcResponse => {
+    stopTunnel()
+    return { success: true }
+  })
+
+  // 获取隧道状态
+  ipcMain.handle('tunnel:status', (): IpcResponse => {
+    return { success: true, data: getTunnelStatus() }
+  })
 
   // ==================== MCP 配置导出 ====================
 

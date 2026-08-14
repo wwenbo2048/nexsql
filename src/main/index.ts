@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, Menu } from 'electron'
 import { join } from 'path'
 import { setupIpcHandlers } from './ipc'
 import { disconnectAll } from './services/db'
+import { stopServer } from './server'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -102,5 +103,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
+  await stopServer()
   await disconnectAll()
 })

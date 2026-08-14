@@ -175,6 +175,32 @@ const api = {
       ipcRenderer.invoke('app:clearCache')
   },
 
+  // 局域网访问服务器
+  server: {
+    start: (port?: number): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:start', port),
+    stop: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:stop'),
+    status: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:status'),
+    refreshPairCode: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('server:refreshPairCode')
+  },
+
+  // 隧道网关
+  tunnel: {
+    getConfig: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('tunnel:getConfig'),
+    saveConfig: (config: { gatewayUrl?: string; tunnelId?: string; secret?: string; tunnelName?: string }): Promise<IpcResponse> =>
+      ipcRenderer.invoke('tunnel:saveConfig', config),
+    start: (port: number): Promise<IpcResponse> =>
+      ipcRenderer.invoke('tunnel:start', port),
+    stop: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('tunnel:stop'),
+    status: (): Promise<IpcResponse> =>
+      ipcRenderer.invoke('tunnel:status')
+  },
+
   // Redis 操作
   redis: {
     testConnection: (config: ConnectionConfig): Promise<IpcResponse> =>
