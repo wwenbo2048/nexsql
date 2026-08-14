@@ -19,6 +19,21 @@ extraResources:
     to: mobile
   - from: node_modules
     to: node_modules
+    filter:
+      # 仅保留生产依赖，排除开发工具链（Defender 重点扫描的未签名 exe 也在其中）
+      - '!**/.bin/**'
+      - '!electron/**'
+      - '!electron-builder/**'
+      - '!electron-vite/**'
+      - '!esbuild/**'
+      - '!typescript/**'
+      - '!vite/**'
+      - '!postcss/**'
+      - '!autoprefixer/**'
+      - '!tailwindcss/**'
+      - '!@electron/**'
+      - '!@types/**'
+      - '!@vitejs/**'
 mac:
   target:
     - dmg
