@@ -1,14 +1,17 @@
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useState } from 'react'
 import {
   Plus,
   Database as DatabaseIcon,
   Terminal,
   ArrowLeftRight,
   RefreshCw,
+  Upload,
+  Download,
 } from 'lucide-react'
 import { useUiStore } from '@stores/ui'
 import { useTabStore } from '@stores/tab'
 import { useBrowserStore } from '@stores/browser'
+import { useConnectionStore } from '@stores/connection'
 import ConnectionTree from './ConnectionTree'
 
 export default function Sidebar() {
@@ -22,6 +25,59 @@ export default function Sidebar() {
   const { selectedConnectionId, selectedDatabase, refreshList } = useBrowserStore()
   const openQuery = useTabStore((s) => s.openQuery)
   const openDbSync = useTabStore((s) => s.openDbSync)
+  const loadConnections = useConnectionStore((s) => s.loadConnections)
+  const setStatus = useConnectionStore((s) => s.setStatus)
+  const toggleExpand = useConnectionStore((s) => s.toggleExpand)
+  const expandedConnections = useConnectionStore((s) => s.expandedConnections)
+  const [importExporting, setImportExporting] = useState<'import' | 'export' | null>(null)
+
+  // 导出连接配置到 JSON 文件（密码为明文，需用户确认）
+  const handleExportConnections = useCallback(async () => {
+    if (!confirm('导出的文件包含明文密码，请妥善保管。\n确定要导出所有连接配置吗？')) return
+    try {
+      setImportExporting('export')
+      const res = await window.api.config.exportConnections()
+      if (!res.success) {
+        alert(`导出失败: ${res.error}`)
+        return
+      }
+      if (!res.data?.canceled) {
+        alert(`导出成功！共 ${res.data?.count ?? 0} 个连接。\n保存至: ${res.data?.path}`)
+      }
+    } catch (err) {
+      alert(`导出失败: ${(err as Error).message}`)
+    } finally {
+      setImportExporting(null)
+    }
+  }, [])
+
+  // 从 JSON 文件导入连接配置（按 id 合并）
+  const handleImportConnections = useCallback(async () => {
+    try {
+      setImportExporting('import')
+      const res = await window.api.config.importConnections()
+      if (!res.success) {
+        alert(`导入失败: ${res.error}`)
+        return
+      }
+      if (res.data && !res.data.canceled) {
+        await loadConnections()
+        // 主进程已断开被更新连接的旧连接池，同步重置前端状态并收起节点
+        res.data.updatedIds.forEach((id) => {
+          setStatus(id, 'disconnected')
+          if (expandedConnections.has(id)) toggleExpand(id)
+        })
+        const parts: string[] = [`新增 ${res.data.added} 个，更新 ${res.data.updated} 个`]
+        if (res.data.updated > 0) parts.push('被更新的连接已断开，需重新连接生效')
+        if (res.data.skipped > 0) parts.push(`跳过 ${res.data.skipped} 条无效记录`)
+        alert(`导入成功！${parts.join('；')}。`)
+      }
+    } catch (err) {
+      alert(`导入失败: ${(err as Error).message}`)
+    } finally {
+      setImportExporting(null)
+    }
+  }, [loadConnections, setStatus, toggleExpand, expandedConnections])
 
   const handleMouseDown = useCallback(() => {
     dragging.current = true
@@ -73,13 +129,31 @@ export default function Sidebar() {
             <DatabaseIcon size={14} />
             连接
           </div>
-          <button
-            onClick={() => openConnectionModal()}
-            className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
-            title="新建连接"
-          >
-            <Plus size={16} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={handleImportConnections}
+              disabled={importExporting !== null}
+              className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="导入连接"
+            >
+              <Upload size={14} />
+            </button>
+            <button
+              onClick={handleExportConnections}
+              disabled={importExporting !== null}
+              className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title="导出连接"
+            >
+              <Download size={14} />
+            </button>
+            <button
+              onClick={() => openConnectionModal()}
+              className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+              title="新建连接"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
         </div>
 
         {/* 快捷操作工具栏 */}

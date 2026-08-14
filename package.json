@@ -1,6 +1,6 @@
 {
   "name": "nexsql",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "nexSql - A modern database management tool",
   "main": "./out/main/index.js",
   "author": "nexSql",

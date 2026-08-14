@@ -37,6 +37,19 @@ const api = {
       ipcRenderer.invoke('config:saveConnection', config),
     deleteConnection: (id: string): Promise<boolean> =>
       ipcRenderer.invoke('config:deleteConnection', id),
+    exportConnections: (): Promise<
+      IpcResponse<{ canceled: boolean; path?: string; count: number }>
+    > => ipcRenderer.invoke('config:exportConnections'),
+    importConnections: (): Promise<
+      IpcResponse<{
+        canceled: boolean
+        added: number
+        updated: number
+        skipped: number
+        updatedIds: string[]
+        path?: string
+      }>
+    > => ipcRenderer.invoke('config:importConnections'),
     exportMcp: (): Promise<IpcResponse<{ path: string; count: number }>> =>
       ipcRenderer.invoke('config:exportMcp'),
     getMcpInfo: (): Promise<IpcResponse<{ serverPath: string; configPath: string; built: boolean }>> =>

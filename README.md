@@ -67,6 +67,7 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 - SSH 隧道连接（密码 / 私钥认证）
 - SSL 加密连接
 - 密码安全存储（macOS Keychain / Windows DPAPI / Linux libsecret）
+- 连接配置导出 / 导入（JSON 格式，支持跨设备迁移；导出时密码以明文写入，导入后自动用本机凭据重新加密；同 id 连接自动合并更新，被更新的连接会断开并需重连生效）
 
 ### SQL 查询
 - **Monaco Editor** 编辑器，语法高亮、代码折叠

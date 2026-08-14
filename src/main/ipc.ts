@@ -1,5 +1,5 @@
 import { ipcMain, type BrowserWindow, dialog, app } from 'electron'
-import { writeFile, readFile, mkdir } from 'fs/promises'
+import { writeFile, readFile, mkdir, chmod } from 'fs/promises'
 import { createReadStream, statSync } from 'fs'
 import { Readable } from 'stream'
 import { join } from 'path'
@@ -275,6 +275,190 @@ export function setupIpcHandlers(_mainWindow: BrowserWindow): void {
     syncMcpConnections()
     return true
   })
+
+  /** 导出所有连接配置到 JSON 文件（密码为明文，便于跨设备导入） */
+  ipcMain.handle(
+    'config:exportConnections',
+    async (): Promise<IpcResponse<{ canceled: boolean; path?: string; count: number }>> => {
+      try {
+        const connections = store.get('connections', [])
+        if (connections.length === 0) {
+          return { success: false, error: '没有可导出的连接' }
+        }
+        // 解密密码，导出明文便于在其他设备导入
+        const plain = connections.map((c) => ({
+          ...c,
+          password: decryptPassword(c.password) ?? '',
+          sshPassword: decryptPassword(c.sshPassword) ?? ''
+        }))
+        const now = new Date()
+        const pad = (n: number) => String(n).padStart(2, '0')
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`
+        const result = await dialog.showSaveDialog(_mainWindow, {
+          defaultPath: `nexsql-connections-${stamp}.json`,
+          filters: [
+            { name: 'JSON 文件', extensions: ['json'] },
+            { name: '所有文件', extensions: ['*'] }
+          ]
+        })
+        if (result.canceled || !result.filePath) {
+          return { success: true, data: { canceled: true, count: 0 } }
+        }
+        const payload = {
+          app: 'nexsql',
+          version: 1,
+          exportedAt: now.toISOString(),
+          connections: plain
+        }
+        await writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf-8')
+        // 文件包含明文密码，收紧权限为仅当前用户可读写（Windows 上为空操作）
+        try {
+          await chmod(result.filePath, 0o600)
+        } catch (permErr) {
+          // 权限收紧失败不阻塞导出（部分文件系统不支持）
+          console.error('[config:exportConnections] chmod 0600 失败:', permErr)
+        }
+        return { success: true, data: { canceled: false, path: result.filePath, count: plain.length } }
+      } catch (err) {
+        logError('config:exportConnections', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
+
+  /** 从 JSON 文件导入连接配置（按 id 合并：已存在则更新，不存在则新增） */
+  ipcMain.handle(
+    'config:importConnections',
+    async (): Promise<
+      IpcResponse<{
+        canceled: boolean
+        added: number
+        updated: number
+        skipped: number
+        updatedIds: string[]
+        path?: string
+      }>
+    > => {
+      try {
+        const result = await dialog.showOpenDialog(_mainWindow, {
+          properties: ['openFile'],
+          filters: [
+            { name: 'JSON 文件', extensions: ['json'] },
+            { name: '所有文件', extensions: ['*'] }
+          ]
+        })
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: true, data: { canceled: true, added: 0, updated: 0, skipped: 0, updatedIds: [] } }
+        }
+        const filePath = result.filePaths[0]
+        const content = await readFile(filePath, 'utf-8')
+
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(content)
+        } catch {
+          return { success: false, error: '文件不是有效的 JSON 格式' }
+        }
+        // 兼容三种格式：{ connections: [...] }（本应用导出 / MCP 配置）/ [ ... ] 纯数组
+        let list: unknown[]
+        if (Array.isArray(parsed)) {
+          list = parsed
+        } else if (
+          parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { connections?: unknown }).connections)
+        ) {
+          list = (parsed as { connections: unknown[] }).connections
+        } else {
+          return { success: false, error: '文件格式不正确：未找到 connections 连接数组' }
+        }
+        if (list.length === 0) {
+          return { success: false, error: '文件中没有连接配置' }
+        }
+
+        const validTypes = ['mysql', 'redis']
+        const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+        const connections = store.get('connections', [])
+        let added = 0
+        let updated = 0
+        let skipped = 0
+        const updatedIds: string[] = []
+        // 同一批次内按 id 去重：重复 id 仅保留首条，避免计数虚高
+        const batchIds = new Set<string>()
+
+        for (const raw of list) {
+          if (!raw || typeof raw !== 'object') {
+            skipped++
+            continue
+          }
+          const item = raw as Record<string, unknown>
+          if (
+            !str(item.name) ||
+            !str(item.host) ||
+            !validTypes.includes(item.type as string)
+          ) {
+            skipped++
+            continue
+          }
+          const type = item.type as ConnectionConfig['type']
+          const imported: ConnectionConfig = {
+            id: str(item.id) ?? uuidv4(),
+            name: (item.name as string).trim(),
+            ...(str(item.group) ? { group: str(item.group) } : {}),
+            ...(Array.isArray(item.tags)
+              ? { tags: item.tags.filter((t): t is string => typeof t === 'string') }
+              : {}),
+            type,
+            host: (item.host as string).trim(),
+            port: typeof item.port === 'number' && item.port > 0 ? item.port : type === 'redis' ? 6379 : 3306,
+            user: typeof item.user === 'string' ? item.user : '',
+            password: encryptPassword(typeof item.password === 'string' ? item.password : '') ?? '',
+            ...(str(item.database) ? { database: str(item.database) } : {}),
+            ...(str(item.color) ? { color: str(item.color) } : {}),
+            sshEnabled: item.sshEnabled === true,
+            ...(str(item.sshHost) ? { sshHost: str(item.sshHost) } : {}),
+            ...(typeof item.sshPort === 'number' && item.sshPort > 0 ? { sshPort: item.sshPort } : {}),
+            ...(str(item.sshUser) ? { sshUser: str(item.sshUser) } : {}),
+            sshPassword: encryptPassword(typeof item.sshPassword === 'string' ? item.sshPassword : '') ?? '',
+            ...(str(item.sshPrivateKey) ? { sshPrivateKey: str(item.sshPrivateKey) } : {}),
+            sslEnabled: item.sslEnabled === true,
+            ...(typeof item.connectTimeout === 'number' && item.connectTimeout > 0
+              ? { connectTimeout: item.connectTimeout }
+              : {}),
+            ...(type === 'redis' && typeof item.redisDb === 'number' ? { redisDb: item.redisDb } : {})
+          }
+          if (batchIds.has(imported.id)) {
+            skipped++
+            continue
+          }
+          batchIds.add(imported.id)
+          const idx = connections.findIndex((c) => c.id === imported.id)
+          if (idx >= 0) {
+            connections[idx] = imported
+            updated++
+            updatedIds.push(imported.id)
+          } else {
+            connections.push(imported)
+            added++
+          }
+        }
+
+        if (added + updated === 0) {
+          return { success: false, error: `没有可导入的有效连接（共 ${skipped} 条无效记录）` }
+        }
+        store.set('connections', connections)
+        // 断开被更新连接的旧连接池/SSH 隧道，确保新配置生效（未连接时为空操作）
+        // 否则连接池按 id 缓存会继续复用旧配置，导致后续操作打到错误实例
+        await Promise.all(updatedIds.map((id) => Promise.allSettled([db.disconnect(id), redis.disconnectRedis(id)])))
+        // 自动同步到 MCP 配置文件
+        syncMcpConnections()
+        return { success: true, data: { canceled: false, added, updated, skipped, updatedIds, path: filePath } }
+      } catch (err) {
+        logError('config:importConnections', err)
+        return { success: false, error: getFullErrorMessage(err) }
+      }
+    }
+  )
 
   // ==================== 数据库操作 ====================
 
