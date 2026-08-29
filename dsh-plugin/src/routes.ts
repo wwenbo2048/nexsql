@@ -6,7 +6,7 @@
  * 失败策略：单个请求错误返回 JSON 错误，不影响其他路由。
  */
 import { createReadStream, statSync } from 'node:fs'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { McpConnectionConfig } from '../../src/mcp/types.js'
@@ -39,12 +39,77 @@ export interface WebServerService {
 }
 
 /**
- * 浏览器鉴权门：接入 dsh Connection 服务的 requestRejection
+ * 浏览器鉴权门：优先接 dsh Connection 服务的 requestRejection
  * （Host/Origin 围栏 + 进程 token / dsh-auth cookie 会话）。
- * 服务不可用时保持 undefined，退化为仅同源校验。
+ * 旧运行时（0.1.1-rc.2 等）无该方法时，退化为下方 isTrustedApiRequest
+ * 等强度围栏；服务不可用时保持 undefined，退化为仅同源校验。
  */
 export interface AuthGate {
   reject?: (request: IncomingMessage) => number | undefined
+}
+
+// ==================== dsh /api 信任围栏的等价实现 ====================
+
+/**
+ * 等价于 @deepseek-ai/dsh-client-connection 的 isTrustedApiRequest
+ * （master 与 0.1.1-rc.2 语义一致）。profile 插件不能 import 该包
+ * （插件按自身路径解析 node_modules，解析不到 dsh 运行时），故内联；
+ * 上游围栏语义变化时同步本节。
+ */
+function parseAuthority(authority: string): URL | undefined {
+  try {
+    return new URL(`http://${authority}`)
+  } catch {
+    return undefined
+  }
+}
+
+/** localhost、IPv6 回环或 127/8 内的任意 IPv4 字面量。 */
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '[::1]') return true
+  const parts = hostname.split('.')
+  return parts.length === 4 && parts[0] === '127' && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)
+}
+
+/** 规范化的 `hostname[:port]`；端口从 http/https 两种解析判定，默认端口也算显式。 */
+function canonicalAuthority(entry: string, entryUrl: URL): string {
+  const port = entryUrl.port !== '' ? entryUrl.port : new URL(`https://${entry}`).port
+  return port === '' ? entryUrl.hostname : `${entryUrl.hostname}:${port}`
+}
+
+/** 显式端口的条目按精确 authority 匹配；无端口条目按 hostname 匹配任意端口。 */
+function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): boolean {
+  return trustedHosts.some((entry) => {
+    const entryUrl = parseAuthority(entry)
+    if (entryUrl === undefined) return false
+    return canonicalAuthority(entry, entryUrl) === entryUrl.hostname
+      ? entryUrl.hostname === hostUrl.hostname
+      : entryUrl.host === hostUrl.host
+  })
+}
+
+/**
+ * Host 是本机（loopback 或 trustedHosts）且浏览器标记（若有）同源。
+ * 防 DNS rebinding 与跨站请求；非浏览器客户端同样受 Host 绑定约束。
+ */
+export function isTrustedApiRequest(
+  request: { headers: IncomingHttpHeaders },
+  trustedHosts: readonly string[],
+): boolean {
+  const headers = request.headers
+  const host = headers.host
+  if (host === undefined) return false
+  const hostUrl = parseAuthority(host)
+  if (hostUrl === undefined) return false
+  if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
+  if (headers['sec-fetch-site'] === 'cross-site') return false
+  const origin = headers.origin
+  if (origin === undefined) return true
+  try {
+    return new URL(origin).host === hostUrl.host
+  } catch {
+    return false
+  }
 }
 
 /** 路由前缀：webserver 的 prefix 按路径段匹配（p 与 p/<anything>），不能带尾斜杠。 */

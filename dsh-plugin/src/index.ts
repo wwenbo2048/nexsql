@@ -19,7 +19,8 @@ import { closeAll, testConnection } from '../../src/mcp/connection-manager.js'
 import * as mysqlTools from '../../src/mcp/mysql-tools.js'
 import * as redisTools from '../../src/mcp/redis-tools.js'
 import type { McpConnectionConfig, McpToolResult } from '../../src/mcp/types.js'
-import { mountNexsqlRoutes, type WebServerService } from './routes.js'
+import type { IncomingHttpHeaders } from 'node:http'
+import { isTrustedApiRequest, mountNexsqlRoutes, type WebServerService } from './routes.js'
 
 // ==================== DSH 插件接口的最小结构面 ====================
 
@@ -561,13 +562,29 @@ export function apply(ctx: PluginContext) {
       }
       // 鉴权门：web 组合里有 connection 服务（Host 围栏 + dsh-auth cookie 会话），
       // 到位后立即生效；无该服务的组合保持 undefined，退化为路由层自身的同源校验。
-      const gate: { reject?: (request: { url?: string; headers: unknown; method?: string }) => number | undefined } = {}
+      const gate: { reject?: (request: { url?: string; headers: IncomingHttpHeaders; method?: string }) => number | undefined } = {}
       services.effect(() => {
         const unregister = mountNexsqlRoutes(services.webServer, gate)
+        // 围栏的 LAN 字面量与 dsh 自身 /api 围栏同源：webRuntime 服务在绑定时推导。
+        let trustedHosts: readonly string[] = []
+        try {
+          ctx.inject(['webRuntime'], (rt: unknown) => {
+            trustedHosts = (rt as { webRuntime?: { trustedHosts?: readonly string[] } }).webRuntime?.trustedHosts ?? []
+          })
+        } catch {
+          // 无 webRuntime：保持空表（仅 loopback 过围栏）
+        }
         try {
           ctx.inject(['connection'], (c: unknown) => {
-            const connection = (c as { connection: { requestRejection(request: unknown): number | undefined } }).connection
-            gate.reject = (request) => connection.requestRejection(request)
+            const connection = (c as { connection: { requestRejection?(request: unknown): number | undefined } }).connection
+            const rejectFn = connection.requestRejection
+            if (typeof rejectFn === 'function') {
+              gate.reject = (request) => rejectFn.call(connection, request)
+            } else {
+              // 旧运行时无 requestRejection：退化为等强度 Host/Origin 围栏
+              // （rc 时代的 /api 也无会话层，保护强度与宿主一致）
+              gate.reject = (request) => (isTrustedApiRequest(request, trustedHosts) ? undefined : 403)
+            }
           })
         } catch {
           // 无 connection 服务（非 web 组合）：保持同源校验
