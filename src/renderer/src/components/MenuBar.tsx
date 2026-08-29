@@ -114,7 +114,7 @@ export default function MenuBar() {
     { label: '', separator: true },
     {
       label: '导入数据...',
-      icon: <Upload size={13} />,
+      icon: <Download size={13} />,
       disabled: !selectedDatabase,
       onClick: () => {
         if (!selectedDatabase) return
@@ -132,7 +132,7 @@ export default function MenuBar() {
     },
     {
       label: '导出数据...',
-      icon: <Download size={13} />,
+      icon: <Upload size={13} />,
       disabled: !selectedDatabase,
       onClick: () => {
         if (!selectedDatabase) return

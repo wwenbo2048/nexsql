@@ -885,7 +885,7 @@ export default function DataTable({ tab }: Props) {
         </button>
         {/* 导入 */}
         <div className="relative" ref={importMenuRef}>
-          <button onClick={() => setShowImportMenu((v) => !v)} disabled={loading || columns.length === 0} className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`} title="导入数据"><Upload size={14} /><ChevronDown size={10} /></button>
+          <button onClick={() => setShowImportMenu((v) => !v)} disabled={loading || columns.length === 0} className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`} title="导入数据"><Download size={14} /><ChevronDown size={10} /></button>
           {showImportMenu && (
             <div className="absolute top-full left-0 mt-1 z-50 bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[120px]">
               <button onClick={() => { setShowImportMenu(false); handleImport('csv') }} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导入 CSV</button>
@@ -896,7 +896,7 @@ export default function DataTable({ tab }: Props) {
         </div>
         {/* 导出 */}
         <div className="relative" ref={exportMenuRef}>
-          <button onClick={() => setShowExportMenu((v) => !v)} disabled={loading || columns.length === 0} className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`} title="导出数据"><Download size={14} /><ChevronDown size={10} /></button>
+          <button onClick={() => setShowExportMenu((v) => !v)} disabled={loading || columns.length === 0} className={`${tbBtn} hover:bg-bg-hover text-text-secondary hover:text-text-primary`} title="导出数据"><Upload size={14} /><ChevronDown size={10} /></button>
           {showExportMenu && (
             <div className="absolute top-full right-0 mt-1 z-50 bg-bg-tertiary border border-border rounded-md shadow-2xl py-1 min-w-[160px]">
               <button onClick={() => handleExport('csv')} className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors">导出 CSV</button>

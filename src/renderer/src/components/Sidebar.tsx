@@ -136,7 +136,7 @@ export default function Sidebar() {
               className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="导入连接"
             >
-              <Upload size={14} />
+              <Download size={14} />
             </button>
             <button
               onClick={handleExportConnections}
@@ -144,7 +144,7 @@ export default function Sidebar() {
               className="p-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               title="导出连接"
             >
-              <Download size={14} />
+              <Upload size={14} />
             </button>
             <button
               onClick={() => openConnectionModal()}
