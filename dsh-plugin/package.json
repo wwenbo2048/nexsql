@@ -1,0 +1,53 @@
+{
+  "name": "nexsql-dsh-plugin",
+  "version": "0.2.0",
+  "description": "nexSql for DeepSeek Harness: native MySQL/Redis tools plus a full database management panel (Host tools + Web client half)",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "src",
+    "client-src",
+    "webui",
+    "cordis.patch.yml",
+    "build.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs && node -e \"const fs=require('fs');if(!fs.existsSync('webui/index.html')){console.error('缺少 webui/index.html：请先在仓库根目录运行 npm run renderer:web');process.exit(1)}console.log('webui 校验通过')\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "ioredis": "^5.11.1",
+    "mysql2": "^3.9.2",
+    "ssh2": "^1.17.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

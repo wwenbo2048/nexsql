@@ -126,6 +126,14 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 - **应用内配置页面**：提供可视化教程弹窗，引导在其他电脑上安装部署
 - **安全设计**：`listConnectionsSafe` 接口剥离密码等敏感字段，仅返回 connectionId、名称、类型
 
+### DeepSeek Harness（DSH）插件
+> 让 [DeepSeek Harness](https://github.com/deepseek-harness) 的 AI 助手直接操作你的数据库，并在 DSH 网页里使用 nexSql 完整管理界面。
+
+- **21 个原生工具**：MySQL / Redis 全套操作以进程内原生工具提供（无 MCP 桥开销），AI 对话中直接调用
+- **内置管理面板**：DSH 设置 → 「nexSql 数据库」→ 打开面板，即桌面应用同一套 UI（连接管理、SQL 查询、Monaco 编辑器、表设计器、ER 图、Redis 浏览）
+- **配置互通**：与桌面应用、MCP 服务共用同一份连接配置，一处添加三处可用
+- 安装方式见 [作为 DSH 插件安装](#作为-dsh-插件安装)，详细文档见 [`dsh-plugin/README.md`](./dsh-plugin/README.md)
+
 ### 性能监控
 - 服务器状态变量（连接数、缓冲池、线程等）
 - 实时进程列表（SHOW PROCESSLIST）
@@ -138,6 +146,30 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 - 多 Tab 页面，支持拖拽排列
 - 可调整面板布局（侧边栏宽度、结果面板高度等，本地持久化）
 - 快捷键支持（Ctrl+Enter 执行、Ctrl+S 保存等）
+
+---
+
+## 作为 DSH 插件安装
+
+nexSql 可作为 [DeepSeek Harness](https://github.com/deepseek-harness) 插件安装：AI 助手获得 21 个原生 MySQL/Redis 工具，DSH 网页内置完整数据库管理面板。假设 profile 名为 `web`：
+
+**npm 安装**（已发布时）：
+
+```sh
+dsh plugin --profile web add nexsql-dsh-plugin
+```
+
+**克隆构建安装**（git 分发）：
+
+```sh
+git clone <本仓库地址> && cd nexSql
+npm install
+npm run renderer:web      # 构建管理面板
+cd dsh-plugin && npm install && npm run build
+dsh plugin --profile web add ./dsh-plugin
+```
+
+安装后 `dsh --profile web` 启动，进入 **设置 → nexSql 数据库** 打开面板；AI 工具即刻可用。tarball 分发、升级方式与详细说明见 [`dsh-plugin/README.md`](./dsh-plugin/README.md)。
 
 ---
 

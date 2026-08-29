@@ -1,0 +1,6 @@
+# nexSql 数据库工具组合包：把 MySQL / Redis 工具注册为 DSH 原生工具。
+# 安装：dsh plugin --profile <name> add <nexSql 仓库>/dsh-plugin
+# 安装后本层把插件行插入 profile 组合，工具以原生名称（mysql_query、redis_get 等）注册。
+- insert:
+    - id: nexsql
+      name: nexsql-dsh-plugin

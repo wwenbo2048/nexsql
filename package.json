@@ -13,8 +13,10 @@
     "build:win": "npm run mcp:build && npm run mobile:build && electron-vite build && electron-builder --win",
     "build:linux": "npm run mcp:build && npm run mobile:build && electron-vite build && electron-builder --linux",
     "mobile:build": "vite build --config vite.mobile.config.ts",
+    "renderer:web": "vite build --config vite.renderer-web.config.ts && cp dsh-plugin/webui-src/api-shim.js dsh-plugin/webui/api-shim.js",
     "mcp:dev": "npx tsx src/mcp/index.ts",
-    "mcp:build": "esbuild src/mcp/index.ts --bundle --platform=node --format=cjs --outfile=out/mcp/index.js --external:mysql2 --external:ioredis --external:ssh2 --external:cpu-features && node scripts/copy-mcp-launcher.js"
+    "mcp:build": "esbuild src/mcp/index.ts --bundle --platform=node --format=cjs --outfile=out/mcp/index.js --external:mysql2 --external:ioredis --external:ssh2 --external:cpu-features && node scripts/copy-mcp-launcher.js",
+    "dsh:build": "cd dsh-plugin && npm run build"
   },
   "dependencies": {
     "@glideapps/glide-data-grid": "^6.0.3",
