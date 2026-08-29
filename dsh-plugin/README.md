@@ -60,7 +60,7 @@ dsh plugin --profile web add ./nexsql-dsh-plugin-<version>.tgz
 pnpm 不支持 git 仓库子目录直装，因此 git 分发走「克隆 → 构建 → 本地路径安装」：
 
 ```sh
-git clone <本仓库地址> && cd nexSql
+git clone https://github.com/wwenbo2048/nexsql.git && cd nexsql
 npm install               # 根目录依赖（renderer 构建需要）
 npm run renderer:web      # 构建管理面板 → dsh-plugin/webui/
 cd dsh-plugin

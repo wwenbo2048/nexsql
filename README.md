@@ -162,7 +162,7 @@ dsh plugin --profile web add nexsql-dsh-plugin
 **克隆构建安装**（git 分发）：
 
 ```sh
-git clone <本仓库地址> && cd nexSql
+git clone https://github.com/wwenbo2048/nexsql.git && cd nexsql
 npm install
 npm run renderer:web      # 构建管理面板
 cd dsh-plugin && npm install && npm run build
