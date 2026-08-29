@@ -1,6 +1,6 @@
 {
   "name": "nexsql-dsh-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "nexSql for DeepSeek Harness: native MySQL/Redis tools plus a full database management panel (Host tools + Web client half)",
   "keywords": [
     "dsh-plugin",
