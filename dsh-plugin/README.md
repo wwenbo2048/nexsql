@@ -39,11 +39,13 @@
 
 假设 DSH profile 名为 `web`（按需替换）。三种方式任选其一。
 
-### 方式一：npm 安装（已发布时，最简）
+### 方式一：npm 安装（推荐）
 
 ```sh
-dsh plugin --profile web add nexsql-dsh-plugin
+dsh plugin --profile web add nexsql-dsh-plugin@latest
 ```
+
+> **注意（pnpm ≥10 构建审批）**：首次 add 会因 ssh2 / cpu-features 的原生编译脚本被拦截而报 `Ignored build scripts`，此时该 profile 的 `pnpm-workspace.yaml` 里已被写入 `allowBuilds` 占位项——把 `ssh2` 和 `cpu-features` 两项改为 `true`，重新执行上面的 add 命令即可完成（原生绑定只为 SSH 隧道提速，不编译也能以纯 JS 回退运行）。
 
 ### 方式二：tarball 安装（未上 npm / 私有分发）
 

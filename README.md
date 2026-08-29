@@ -153,11 +153,13 @@ nexSql 不是一个传统的数据库客户端。AI 不是附属功能，而是�
 
 nexSql 可作为 [DeepSeek Harness](https://github.com/deepseek-harness) 插件安装：AI 助手获得 21 个原生 MySQL/Redis 工具，DSH 网页内置完整数据库管理面板。假设 profile 名为 `web`：
 
-**npm 安装**（已发布时）：
+**npm 安装**（推荐，已发布到 [npm](https://www.npmjs.com/package/nexsql-dsh-plugin)）：
 
 ```sh
-dsh plugin --profile web add nexsql-dsh-plugin
+dsh plugin --profile web add nexsql-dsh-plugin@latest
 ```
+
+> 首次安装若报 `Ignored build scripts`（pnpm ≥10 审批 ssh2 原生编译）：把 profile 的 `pnpm-workspace.yaml` 中 `allowBuilds` 下的 `ssh2`、`cpu-features` 改为 `true`，重新执行 add 即可。
 
 **克隆构建安装**（git 分发）：
 
